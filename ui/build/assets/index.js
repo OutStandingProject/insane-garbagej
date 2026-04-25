@@ -61,10 +61,24 @@ function profilePercent(extra) {
   return Math.max(0, Math.min(100, ((exp + Number(extra || 0)) / next) * 100));
 }
 
+/* Resolve o nome do jogador: o servidor envia characterName (QBCore/ESX).
+   Fallback para name caso outro framework envie campo diferente. */
+function resolvePlayerName(p) {
+  return p.characterName || p.name || ui('victor_goods', 'Victor Goods');
+}
+
+/* Resolve a imagem do jogador: usa mugshot (headshot nativo GTA V) gerado no client.lua.
+   Fallback para photo caso exista. */
+function resolvePlayerPhoto(p) {
+  return p.mugshot || p.photo || null;
+}
+
 function renderProfile() {
   const p = state.userProfile || {};
   const el = id => document.getElementById(id);
-  el('workerName').textContent   = p.name     || ui('victor_goods', 'Victor Goods');
+
+  // Nome correto do personagem (characterName enviado pelo servidor)
+  el('workerName').textContent   = resolvePlayerName(p);
   el('workerJob').textContent    = p.jobLabel || p.job || 'Sanitation Worker';
   el('repLabel').textContent     = ui('reputation', 'Reputation');
   el('repText').textContent      = `${Number(p.exp || 1200).toLocaleString()} / ${Number(p.nextLevelExp || 1800).toLocaleString()} XP`;
@@ -78,7 +92,40 @@ function renderProfile() {
   el('gpsLabel').textContent     = ui('gps', 'GPS');
   el('lobbyLabel').textContent   = ui('lobby', 'Lobby');
   el('rankLabel').textContent    = ui('top_reputation', 'Top Reputation');
-  if (p.photo) document.querySelector('.avatar').style.backgroundImage = `url('${p.photo}')`;
+
+  // Avatar: usa mugshot nativo do GTA V (gerado no client.lua via RegisterPedHeadshotHandle)
+  const photo = resolvePlayerPhoto(p);
+  const avatar = document.querySelector('.avatar');
+  if (avatar) {
+    if (photo) {
+      avatar.style.backgroundImage = `url('${photo}')`;
+    } else {
+      avatar.style.backgroundImage = '';
+    }
+  }
+
+  // Ao carregar o perfil, preenche automaticamente o slot 0 do lobby com o próprio jogador
+  injectSelfIntoLobby();
+}
+
+/* Injeta o próprio jogador no primeiro slot do lobby se ainda não estiver lá */
+function injectSelfIntoLobby() {
+  const p = state.userProfile || {};
+  if (!p.source) return; // perfil ainda não carregado
+
+  const selfMember = {
+    source:        p.source,
+    characterName: resolvePlayerName(p),
+    mugshot:       resolvePlayerPhoto(p),
+    isLeader:      true,
+    isSelf:        true
+  };
+
+  // Garante que o slot 0 é sempre o próprio jogador
+  const currentLobby = Array.isArray(state.lobby) ? state.lobby : [];
+  const withoutSelf  = currentLobby.filter(m => m && !m.isSelf);
+  state.lobby = [selfMember, ...withoutSelf];
+  renderLobby(state.lobby);
 }
 
 function normalizeTasks(tasks) {
@@ -113,8 +160,8 @@ function renderTasks() {
 }
 
 /* === LOBBY ===
-   Espera array de membros: [{name, photo, isLeader}, ...] máx 4
-   Ou número (apenas count de jogadores online no lobby) */
+   Espera array de membros: [{characterName, mugshot, isLeader, isSelf}, ...] máx 4
+   O slot 0 é sempre o próprio jogador (preenchido em injectSelfIntoLobby). */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
@@ -127,11 +174,15 @@ function renderLobby(members) {
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
     if (m) {
       const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
-      const photo = m.photo ? `url('${m.photo}')` : '';
+      // Usa mugshot (headshot nativo GTA V); fallback para photo se existir
+      const imgSrc = m.mugshot || m.photo || null;
+      const bgStyle = imgSrc ? `style="background-image:url('${imgSrc}')"` : '';
+      // Nome: usa characterName (QBCore/ESX); fallback para name
+      const displayName = m.characterName || m.name || '';
       slot.innerHTML = `
         ${crown}
-        <div class="slot-avatar" ${photo ? `style="background-image:${photo}"` : ''}></div>
-        <div class="slot-name">${m.name || ''}</div>
+        <div class="slot-avatar" ${bgStyle}></div>
+        <div class="slot-name">${displayName}</div>
       `;
     } else {
       slot.innerHTML = '<div class="slot-avatar"></div>';
@@ -141,7 +192,8 @@ function renderLobby(members) {
 }
 
 /* === TOP 3 RANKS ===
-   Espera array: [{name, exp, photo}, ...] ordenado por exp desc */
+   Espera array: [{characterName, exp}, ...] ordenado por exp desc.
+   O servidor envia characterName (QBCore/ESX) — fix do "undefined". */
 const RANK_MEDALS = ['&#x1F947;','&#x1F948;','&#x1F949;'];
 
 function renderRanks(ranks) {
@@ -153,9 +205,11 @@ function renderRanks(ranks) {
     const r = top[i];
     const item = document.createElement('div');
     item.className = `rank-item rank-${i+1}`;
+    // Usa characterName (campo real do servidor); fallback para name
+    const rankName = r ? (r.characterName || r.name || '—') : '—';
     item.innerHTML = `
       <span class="rank-pos">${RANK_MEDALS[i]}</span>
-      <span class="rank-name">${r ? r.name : '—'}</span>
+      <span class="rank-name">${rankName}</span>
       <span class="rank-xp">${r ? Number(r.exp || 0).toLocaleString() + ' XP' : '0 XP'}</span>
     `;
     list.appendChild(item);
@@ -195,14 +249,37 @@ window.addEventListener('message', (ev) => {
       else if (typeof raw.show === 'boolean')
         setVisible(raw.show);
       return;
-    case 'ui:setUserProfile': state.userProfile = payload; renderProfile(); return;
-    case 'ui:setTasks':       state.tasks = payload; renderTasks(); return;
-    case 'ui:setDebug':       setVisible(true); return;
+    case 'ui:setUserProfile':
+      state.userProfile = payload;
+      renderProfile(); // injectSelfIntoLobby é chamado dentro de renderProfile
+      return;
+    case 'ui:setPlayerMugshot':
+      // Atualiza o mugshot em tempo real (o headshot pode demorar uns ms a ficar pronto)
+      if (typeof payload === 'string' && payload) {
+        state.userProfile.mugshot = payload;
+        // Atualiza avatar principal
+        const avatar = document.querySelector('.avatar');
+        if (avatar) avatar.style.backgroundImage = `url('${payload}')`;
+        // Atualiza slot 0 do lobby (próprio jogador)
+        injectSelfIntoLobby();
+      }
+      return;
+    case 'ui:setTasks':
+      state.tasks = payload;
+      renderTasks();
+      return;
+    case 'ui:setDebug':
+      setVisible(true);
+      return;
     case 'ui:setCurrentLobby':
-    case 'ui:setLobbyMembers':
-      state.lobby = Array.isArray(payload) ? payload : (payload.members || []);
+    case 'ui:setLobbyMembers': {
+      const incoming = Array.isArray(payload) ? payload : (payload.members || []);
+      // Mantém o próprio jogador no slot 0 e adiciona os restantes membros
+      const selfMember = (state.lobby || []).find(m => m && m.isSelf);
+      state.lobby = selfMember ? [selfMember, ...incoming.filter(m => m && !m.isSelf)] : incoming;
       renderLobby(state.lobby);
       return;
+    }
     case 'ui:setRanks':
       state.ranks = Array.isArray(payload) ? payload : (payload.ranks || []);
       renderRanks(state.ranks);
