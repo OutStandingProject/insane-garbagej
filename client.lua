@@ -9,7 +9,7 @@ client = {
     inLobby = false,
     lobby = {
         id = nil,
-        members = {}, --[[@type table<key, {source:number, photo: number}>]]
+        members = {}, --[[@type table<key, {source:number, photo: number, characterName: string, mugshot: string}>]]
         leaderId = nil,
         isTaskStarted = false,
         isTaskFinished = false,
@@ -52,6 +52,27 @@ local lastDumpster = {
 ---@param data any
 function client.SendReactMessage(action, data)
     SendNUIMessage({ action = action, data = data })
+end
+
+--- Gera o headshot (mugshot) nativo do GTA V para o ped local.
+--- Retorna o txd string que pode ser usado como src na NUI.
+---@return string
+local function generatePlayerHeadshot()
+    local ped = cache.ped
+    local handle = RegisterPedHeadshotHandle(ped)
+    local timeout = 0
+    while not IsPedHeadshotReady(handle) and timeout < 100 do
+        Citizen.Wait(50)
+        timeout = timeout + 1
+    end
+    if IsPedHeadshotReady(handle) then
+        local txd = GetPedHeadshotTxdString(handle)
+        -- Não unregister imediatamente para a NUI conseguir carregar a imagem
+        -- O GTA limpa automaticamente quando o resource reinicia
+        return txd or ""
+    end
+    UnregisterPedHeadshot(handle)
+    return ""
 end
 
 --- Calculates the user's level on experience
@@ -297,7 +318,16 @@ local function openMenu()
     userProfile.source = cache.serverId
     userProfile.level = getUserLevel(userProfile.exp)
     userProfile.nextLevelExp = getNextLevelExp(userProfile.exp)
-    client.SendReactMessage('ui:setUserProfile', userProfile)
+
+    -- Gerar headshot nativo do GTA V (mugshot do ped atual)
+    Citizen.CreateThread(function()
+        local mugshot = generatePlayerHeadshot()
+        userProfile.mugshot = mugshot or ""
+        client.SendReactMessage('ui:setUserProfile', userProfile)
+        -- Envia também separadamente para atualizar só o mugshot caso o perfil já esteja carregado
+        client.SendReactMessage('ui:setPlayerMugshot', mugshot or "")
+    end)
+
     client.SendReactMessage('ui:setVisible', true)
     SetNuiFocus(true, true)
     lib.callback(_e('server:GetRanks'), false, function(data)
@@ -1006,7 +1036,6 @@ local function createMovableDumpsterAndCheckInPedHand()
         if taskVehicle and DoesEntityExist(taskVehicle) then
             SetVehicleDoorOpen(taskVehicle, 5)
 
-            -- Fase 1: levar até ao camião e esvaziar (fluxo original)
             while client.hands.busy do
                 local playerPed, playerPos = cache.ped, GetEntityCoords(cache.ped)
                 local targetPos = Utils.GetVehicleDoorPosition(taskVehicle)
@@ -1041,11 +1070,9 @@ local function createMovableDumpsterAndCheckInPedHand()
                 Citizen.Wait(5)
             end
 
-            -- Fase 2: aguarda [E] para pegar no caixote, depois devolve às coords originais
             if DoesEntityExist(createdNetDumpster) then
                 setTaskInfoText('Devolve o caixote à posição inicial!')
 
-                -- Aguarda o jogador chegar perto do caixote e premir [E] para o pegar
                 while true do
                     local playerPos = GetEntityCoords(cache.ped)
                     local dumpsterPos = GetEntityCoords(createdNetDumpster)
@@ -1061,7 +1088,6 @@ local function createMovableDumpsterAndCheckInPedHand()
                             Utils.HideTextUI()
                             textUI = false
 
-                            -- Pega no caixote
                             lib.requestAnimDict(animDict)
                             TaskPlayAnim(cache.ped, animDict, 'pushcar_offcliff_f', 8.0, -8.0, -1, 49, 0, false, false, false)
                             RemoveAnimDict(animDict)
@@ -1082,7 +1108,6 @@ local function createMovableDumpsterAndCheckInPedHand()
                     Citizen.Wait(5)
                 end
 
-                -- Aguarda o jogador chegar às coords originais e premir [E] para devolver
                 while true do
                     local playerPos = GetEntityCoords(cache.ped)
                     local distToOriginal = #(playerPos - originalCoords)
@@ -1103,7 +1128,6 @@ local function createMovableDumpsterAndCheckInPedHand()
                             Utils.HideTextUI()
                             textUI = false
 
-                            -- Só agora regista o progresso
                             TriggerServerEvent(_e('server:IncProgressGoal'), client.lobby.id, { type = 'dumpster' })
                             break
                         end
@@ -1219,7 +1243,6 @@ local function checkVehScoop()
                 local distance = #(dumpsterCoords - scoopCoords)
 
                 if not lastDumpster.attached and not scoopFull then
-                    -- Fase 1: aproximar e premir E para pegar no caixote
                     if distance <= 6.0 and scoopRotation.x <= -75.0 then
                         wait = 5
                         if not textUI then
@@ -1252,7 +1275,6 @@ local function checkVehScoop()
                     end
 
                 elseif lastDumpster.attached and not scoopFull then
-                    -- Fase 2: levantar a scoop para esvaziar
                     if GetGameTimer() - lastTextUpdate >= textUpdateInterval then
                         if not textUI then textUI = true end
                         Utils.ShowTextUI(locale('per_dumpster', lastDumpster.clean))
@@ -1269,19 +1291,18 @@ local function checkVehScoop()
                                 0.0, 0.0, 0.0,
                                 2.5, false, false, false)
 
-                            -- Progress bar com bloqueio da scoop
                             Citizen.CreateThread(function()
                                 local blocking = true
 
                                 Citizen.CreateThread(function()
                                     while blocking do
-                                        DisableControlAction(0, 99, true)   -- NUM8 / scoop cima
-                                        DisableControlAction(0, 100, true)  -- NUM5 / scoop centro
-                                        DisableControlAction(0, 101, true)  -- NUM2 / scoop baixo
-                                        DisableControlAction(0, 75, true)   -- INPUT_VEH_HYDRAULICS
-                                        DisableControlAction(0, 76, true)   -- INPUT_VEH_HYDRAULICS_CONTROL_TOGGLE
-                                        DisableControlAction(0, 21, true)   -- SHIFT (INPUT_SPRINT)
-                                        DisableControlAction(0, 36, true)   -- CTRL (INPUT_DUCK)
+                                        DisableControlAction(0, 99, true)
+                                        DisableControlAction(0, 100, true)
+                                        DisableControlAction(0, 101, true)
+                                        DisableControlAction(0, 75, true)
+                                        DisableControlAction(0, 76, true)
+                                        DisableControlAction(0, 21, true)
+                                        DisableControlAction(0, 36, true)
                                         DisableControlAction(0, 60, true)
                                         DisableControlAction(0, 61, true)
                                         DisableControlAction(0, 62, true)
@@ -1343,7 +1364,6 @@ local function checkVehScoop()
                     end
 
                 elseif scoopFull then
-                    -- Fase 3: voltar às coords originais e pousar o caixote
                     local distToOriginal = #(dumpsterCoords - scoopCoords)
 
                     if distToOriginal <= 6.0 and scoopRotation.x <= -75.0 then
@@ -1368,7 +1388,6 @@ local function checkVehScoop()
                             TriggerServerEvent(_e('server:IncProgressGoal'), client.lobby.id, { type = 'dumpster' })
                             setTaskInfoText(locale('info_binbag_progress'))
 
-                            -- Apaga o caixote só quando o jogador se afastar
                             Citizen.CreateThread(function()
                                 while true do
                                     Citizen.Wait(5000)
@@ -1742,130 +1761,39 @@ RegisterNetEvent(_e('client:LastStepBagFullyProcessed'), function()
     end
 end)
 
--- exports.interact:AddInteraction({
---     coords = vector3(-318.16, -1544.66, 27.71),
---     distance = 17.0, -- optional
---     interactDst = 1.0, -- optional
---     id = 'garbagejobX', -- needed for removing interactions
---     name = 'garbagejobX', -- optional
---     options = {
---         {
---             label = 'Garbage Manager',
---             action = function()
---                 -- Toggle job duty
---                 client.onDuty = not client.onDuty
-
---                 -- Notify the player
---                 Utils.Notify(locale(client.onDuty and 'on_duty' or 'off_duty'), client.onDuty and 'success' or 'inform')
-
---                 -- Set the job uniform if active
---                 if Config.JobUniforms.active then
---                     local xPlayer = client.framework.Functions.GetPlayerData()
---                     if xPlayer and xPlayer.charinfo then
---                         local outfitData = xPlayer.charinfo.gender == 1 and Config.JobUniforms.female or Config.JobUniforms.male
---                         outfitData['hat'].texture = math.random(8)
---                         TriggerEvent('qb-clothing:client:loadOutfit', { outfitData = outfitData })
---                     end
---                 end
-
---                 -- Set the working point
---                 client.workingPoint = client.onDuty and 1 or nil
-
---                 -- Open the menu if starting duty
---                 if client.onDuty then
---                     openMenu()
---                 end
-
---                 -- If going off duty and in a lobby, leave the lobby
---                 if not client.onDuty and client.inLobby then
---                     Lobby.Leave()
---                 end
---             end,
---         },
---     }
--- })
-
-
--- Command to manually sign in/out
--- RegisterCommand("signin", function()
---     TriggerEvent("mp-garbage:SignIn")
--- end, false)
-
--- Event for signing in to the garbage job
 RegisterNetEvent('mp-garbage:SignIn', function()
-    print("mp-garbage:SignIn event triggered!") -- Debug print
-
-    -- Toggle job duty
     client.onDuty = not client.onDuty
-    print("Job duty toggled. On Duty:", client.onDuty) -- Debug print
-
-    -- Notify the player
     Utils.Notify(client.onDuty and 'You are now on duty!' or 'You are now off duty!', client.onDuty and 'success' or 'inform')
-    print("Notification sent.") -- Debug print
 
-    -- Set the job uniform if active
     if Config.JobUniforms.active then
-        print("Setting job uniform...") -- Debug print
         local xPlayer = client.framework.Functions.GetPlayerData()
         if xPlayer and xPlayer.charinfo then
             local outfitData = xPlayer.charinfo.gender == 1 and Config.JobUniforms.female or Config.JobUniforms.male
             outfitData['hat'].texture = math.random(8)
             TriggerEvent('qb-clothing:client:loadOutfit', { outfitData = outfitData })
-            print("Uniform set.") -- Debug print
-        else
-            print("Failed to set uniform: Player data not found.") -- Debug print
         end
     end
 
-    -- Set the working point
     client.workingPoint = client.onDuty and 1 or nil
-    print("Working point set:", client.workingPoint) -- Debug print
 
-    -- Open the menu if starting duty
-    -- if client.onDuty then
-    --     print("Opening menu...") -- Debug print
-    --     openMenu()
-    -- end
-
-    -- If going off duty and in a lobby, leave the lobby
     if not client.onDuty and client.inLobby then
-        print("Leaving lobby...") -- Debug print
         Lobby.Leave()
     end
 end)
 
 RegisterNetEvent('mp-garbage:opentab', function()
-    -- Open the menu if starting duty
     if client.onDuty then
-        print("Opening menu...") -- Debug print
         openMenu()
     else
         TriggerEvent("pyh-tablet:Notify", "Garbage Management", "you need to be on duty!", 'assets/hq.png', 2000)
     end
-
-    -- If going off duty and in a lobby, leave the lobby
-    -- if not client.onDuty and client.inLobby then
-    --     print("Leaving lobby...") -- Debug print
-    --     Lobby.Leave()
-    -- end
 end)
 
-
--- Event for signing out of the garbage job
 RegisterNetEvent('mp-garbage:SignOut', function()
-    print("mp-garbage:SignOut event triggered!") -- Debug print
-
-    -- Toggle job duty
     client.onDuty = false
-    print("Job duty toggled. On Duty:", client.onDuty) -- Debug print
-
-    -- Notify the player
     Utils.Notify('You are now off duty!', 'inform')
-    print("Notification sent.") -- Debug print
 
-    -- Revert to the original skin/uniform
     if Config.JobUniforms.active then
-        print("Reverting to original skin...") -- Debug print
         if shared.framework == 'esx' then
             client.framework.TriggerServerCallback('esx_skin:getPlayerSkin', function(skin)
                 if skin then TriggerEvent('skinchanger:loadSkin', skin) end
@@ -1875,13 +1803,9 @@ RegisterNetEvent('mp-garbage:SignOut', function()
         end
     end
 
-    -- Reset the working point
     client.workingPoint = nil
-    print("Working point reset.") -- Debug print
 
-    -- If in a lobby, leave the lobby
     if client.inLobby then
-        print("Leaving lobby...") -- Debug print
         Lobby.Leave()
     end
 end)
