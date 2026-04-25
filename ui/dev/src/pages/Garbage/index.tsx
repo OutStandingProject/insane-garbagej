@@ -15,32 +15,22 @@ const Garbage: React.FC = () => {
   const { t } = useTranslation();
   const { userProfile, currentLobby } = useData();
   const [openedPopup, setOpenedPopup] = useState<
-    "profile-photo" | "invite" | undefined
+    "invite" | undefined
   >();
   const [popError, setPopError] = useState<string | undefined>(undefined);
-  const [selectedNewPhoto, setSelectedNewPhoto] = useState<number>(
-    userProfile.photo
-  );
   const [invitedTarget, setInvitedTarget] = useState<number>();
   const [activeTab, setActiveTab] = useState<"tasks" | "ranks">("tasks");
-
-  const handleSavePhoto = async () => {
-    await fetchNui("nui:updateProfilePhoto", selectedNewPhoto, true);
-  };
 
   const calcReputationWidth = () => {
     if (!userProfile || !userProfile.exp || !userProfile.nextLevelExp) return 0;
     return (userProfile.exp / userProfile.nextLevelExp) * 100;
   };
 
-  const handleOpenProfilePhotoPopup = () => {
-    setPopError(undefined);
-    setOpenedPopup("profile-photo");
-  };
   const handleOpenInvitePopup = () => {
     setPopError(undefined);
     setOpenedPopup("invite");
   };
+
   const handleSendInvite = async () => {
     const response = await fetchNui("nui:sendInviteToPlayer", invitedTarget, {
       error: undefined,
@@ -54,54 +44,62 @@ const Garbage: React.FC = () => {
     }
   };
 
-  /* ── Profile photo thumbnail ── */
-  const UserProfile: React.FC<{ isLeader: boolean }> = ({ isLeader }) => (
-    <button
-      onClick={handleOpenProfilePhotoPopup}
-      className="relative w-10 h-10 bg-white/10 rounded-md overflow-hidden"
-    >
+  /* ── Avatar helper: usa mugshot (headshot nativo do GTA) se disponível, senão fallback ── */
+  const PlayerAvatar: React.FC<{ mugshot?: string; photo?: number; size?: string }> = ({
+    mugshot,
+    photo,
+    size = "w-10 h-10",
+  }) => {
+    if (mugshot && mugshot.length > 0) {
+      return (
+        <img
+          src={`nui://insane-garbagej/ui/build/headshots/${mugshot}`}
+          alt="avatar"
+          className={`${size} object-cover rounded-md`}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = `images/profiles/${photo ?? 7}.png`;
+          }}
+        />
+      );
+    }
+    return (
       <img
-        src={`images/profiles/${userProfile.photo}.png`}
-        alt="profile"
-        className="w-full h-full object-cover"
+        src={`images/profiles/${photo ?? 7}.png`}
+        alt="avatar"
+        className={`${size} object-cover rounded-md`}
       />
-      {isLeader && (
-        <FaCrown className="absolute -top-1.5 -left-1.5 text-[#F5C842] z-10 w-3 h-3" />
-      )}
-    </button>
-  );
+    );
+  };
 
   /* ── Team invite slots ── */
-  const InviteComponent: React.FC = () => (
-    <div className="flex gap-1.5">
-      {!currentLobby.id && <UserProfile isLeader={true} />}
-      {Array(currentLobby.id ? 4 : 3)
-        .fill(undefined)
-        .map((_, i) => (
-          <div key={i} className="relative w-10 h-10 bg-white/10 rounded-md overflow-hidden">
-            {currentLobby.id && currentLobby.members[i] ? (
+  const InviteComponent: React.FC = () => {
+    // Slot 0 é sempre o próprio player (mesmo sem lobby ativo)
+    // Slots 1-3 são membros do lobby ou botões de convite
+    const selfSlot = (
+      <div key="self" className="relative w-10 h-10 bg-white/10 rounded-md overflow-hidden flex-shrink-0">
+        <PlayerAvatar mugshot={userProfile.mugshot} photo={userProfile.photo} />
+        {/* Crown se for líder ou não tiver lobby */}
+        {(!currentLobby.id || currentLobby.leaderId === userProfile.source) && (
+          <FaCrown className="absolute -top-1 -left-1 text-[#F5C842] z-10 w-3 h-3" />
+        )}
+      </div>
+    );
+
+    const memberSlots = Array(3)
+      .fill(undefined)
+      .map((_, i) => {
+        // Quando há lobby, preencher com membros (excluindo o próprio jogador que já está no slot 0)
+        const otherMembers = currentLobby.id
+          ? (currentLobby.members || []).filter((m) => m.source !== userProfile.source)
+          : [];
+        const member = otherMembers[i];
+
+        return (
+          <div key={i} className="relative w-10 h-10 bg-white/10 rounded-md overflow-hidden flex-shrink-0">
+            {member ? (
               <>
-                <button
-                  onClick={
-                    currentLobby.members[i]?.source == userProfile.source
-                      ? handleOpenProfilePhotoPopup
-                      : () => {}
-                  }
-                  className={classNames(
-                    "relative w-full h-full flex items-center justify-center overflow-hidden",
-                    {
-                      "cursor-default":
-                        currentLobby.members[i]?.source != userProfile.source,
-                    }
-                  )}
-                >
-                  <img
-                    src={`images/profiles/${currentLobby.members[i]?.photo}.png`}
-                    alt="profile"
-                    className="w-full h-full object-cover"
-                  />
-                </button>
-                {currentLobby.members[i].source == currentLobby.leaderId && (
+                <PlayerAvatar mugshot={member.mugshot} photo={member.photo} />
+                {member.source === currentLobby.leaderId && (
                   <FaCrown className="absolute -top-1 -left-1 text-[#F5C842] z-10 w-3 h-3" />
                 )}
               </>
@@ -114,21 +112,40 @@ const Garbage: React.FC = () => {
               </button>
             )}
           </div>
-        ))}
-    </div>
-  );
+        );
+      });
 
-  /* ── Left panel: profile image (top half) ── */
+    return (
+      <div className="flex gap-1.5">
+        {selfSlot}
+        {memberSlots}
+      </div>
+    );
+  };
+
+  /* ── Left panel: profile image com mugshot real do GTA ── */
   const ProfileImage = () => (
     <div className="relative w-full h-44 overflow-hidden rounded-t-lg flex-shrink-0">
-      <div
-        className="w-full h-full bg-cover bg-center grayscale"
-        style={{ backgroundImage: "url(images/app_delivery_bg.png)" }}
-      />
+      {/* Background: mugshot do player ou imagem padrão */}
+      {userProfile.mugshot && userProfile.mugshot.length > 0 ? (
+        <img
+          src={`nui://insane-garbagej/ui/build/headshots/${userProfile.mugshot}`}
+          alt="player"
+          className="w-full h-full object-cover grayscale"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = "images/app_delivery_bg.png";
+          }}
+        />
+      ) : (
+        <div
+          className="w-full h-full bg-cover bg-center grayscale"
+          style={{ backgroundImage: "url(images/app_delivery_bg.png)" }}
+        />
+      )}
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
       <div className="absolute bottom-3 left-3">
         <h1 className="text-sm font-bold text-white leading-tight">
-          {t("victor_goods")}
+          {userProfile.characterName || t("victor_goods")}
         </h1>
         <p className="text-xs text-white/50 font-medium">Sanitation Worker</p>
       </div>
@@ -167,7 +184,7 @@ const Garbage: React.FC = () => {
       <div className="flex justify-between items-start">
         <div className="flex flex-col">
           <h1 className="font-semibold text-sm text-white">{t("garbage_about")}</h1>
-          <p className="text-xs text-white/40">{t("victor_goods")}</p>
+          <p className="text-xs text-white/40">{userProfile.characterName || t("victor_goods")}</p>
         </div>
         <InviteComponent />
       </div>
@@ -197,49 +214,24 @@ const Garbage: React.FC = () => {
   );
 
   /* ── Popup content ── */
-  const PopupContent = () =>
-    openedPopup === "profile-photo" ? (
-      <>
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          {[1, 2, 3, 4, 5, 6, 7].map((v) => (
-            <button
-              key={v}
-              onClick={() => setSelectedNewPhoto(v)}
-              className={`w-16 h-16 border border-transparent rounded-md bg-white/10 overflow-hidden ${
-                selectedNewPhoto === v ? "border-white" : ""
-              }`}
-            >
-              <img src={`images/profiles/${v}.png`} alt="profile-photo" className="w-full h-full object-cover" />
-            </button>
-          ))}
-        </div>
-        <div className="flex justify-center mt-4">
-          <button
-            onClick={handleSavePhoto}
-            className="px-8 py-2 text-white rounded-md bg-green-600 hover:bg-green-500 transition"
-          >
-            <span className="font-bold text-sm">{t("save")}</span>
-          </button>
-        </div>
-      </>
-    ) : (
-      <div className="flex flex-col gap-3">
-        <input
-          autoFocus
-          className="rounded-md bg-transparent ring-0 outline-none p-1.5 border border-white/30 focus:border-white/70 text-center text-sm font-semibold"
-          placeholder={t("player_id") + "..."}
-          type="number"
-          value={invitedTarget}
-          onChange={(e) => setInvitedTarget(parseInt(e.currentTarget.value))}
-        />
-        <button
-          onClick={handleSendInvite}
-          className="font-semibold text-sm text-[#F5C842] bg-[#F5C842]/15 hover:bg-[#F5C842]/25 transition p-1.5 rounded-md border border-[#F5C842]/40"
-        >
-          {t("invite")}
-        </button>
-      </div>
-    );
+  const PopupContent = () => (
+    <div className="flex flex-col gap-3">
+      <input
+        autoFocus
+        className="rounded-md bg-transparent ring-0 outline-none p-1.5 border border-white/30 focus:border-white/70 text-center text-sm font-semibold"
+        placeholder={t("player_id") + "..."}
+        type="number"
+        value={invitedTarget}
+        onChange={(e) => setInvitedTarget(parseInt(e.currentTarget.value))}
+      />
+      <button
+        onClick={handleSendInvite}
+        className="font-semibold text-sm text-[#F5C842] bg-[#F5C842]/15 hover:bg-[#F5C842]/25 transition p-1.5 rounded-md border border-[#F5C842]/40"
+      >
+        {t("invite")}
+      </button>
+    </div>
+  );
 
   /* ── Tab switcher ── */
   const TabSwitcher = () => (
@@ -309,10 +301,7 @@ const Garbage: React.FC = () => {
       <Popup
         isOpen={!!openedPopup}
         onClose={() => setOpenedPopup(undefined)}
-        title={
-          openedPopup &&
-          (openedPopup === "invite" ? t("invite") : t("update_photo"))
-        }
+        title={openedPopup === "invite" ? t("invite") : undefined}
         error={popError}
       >
         <PopupContent />

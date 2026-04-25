@@ -20,14 +20,25 @@ const Ranks = () => {
         {/* Player info */}
         <div className="flex items-center gap-2.5 px-3 min-w-0">
           <div className="w-8 h-8 rounded-md overflow-hidden bg-white/10 flex-shrink-0">
-            <img
-              src={`images/profiles/${v.photo}.png`}
-              alt="profile"
-              className="w-full h-full object-cover"
-            />
+            {v.mugshot && v.mugshot.length > 0 ? (
+              <img
+                src={`nui://insane-garbagej/ui/build/headshots/${v.mugshot}`}
+                alt="profile"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = `images/profiles/${v.photo ?? 7}.png`;
+                }}
+              />
+            ) : (
+              <img
+                src={`images/profiles/${v.photo ?? 7}.png`}
+                alt="profile"
+                className="w-full h-full object-cover"
+              />
+            )}
           </div>
           <span className="text-sm font-semibold text-white whitespace-nowrap overflow-hidden text-ellipsis">
-            {v.characterName}
+            {v.characterName || "—"}
           </span>
         </div>
 
@@ -41,7 +52,7 @@ const Ranks = () => {
         {/* Exp badge */}
         <div className="flex items-center justify-center px-1">
           <div className="h-8 px-3 rounded-md flex items-center justify-center bg-[#F5C842]/10 border border-[#F5C842]/40">
-            <span className="text-sm font-semibold text-[#F5C842]">{v.exp}</span>
+            <span className="text-sm font-semibold text-[#F5C842]">{v.exp} XP</span>
           </div>
         </div>
       </div>

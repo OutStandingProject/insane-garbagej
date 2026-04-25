@@ -6,11 +6,15 @@ export interface iProfile {
   exp: number;
   nextLevelExp: number;
   photo: number;
+  characterName: string;
+  mugshot: string;
 }
 
 export interface iPlayer {
   source: number;
   photo: number;
+  characterName: string;
+  mugshot: string;
 }
 
 type iTaskGoals = number;
@@ -40,6 +44,7 @@ export interface iRank {
   characterName: string;
   exp: number;
   photo: number;
+  mugshot: string;
   level: number;
 }
 

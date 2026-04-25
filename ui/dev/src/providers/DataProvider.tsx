@@ -48,10 +48,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       members: newMembers,
     }));
   });
-  useNuiEvent("ui:setProfilePhoto", (newPhoto: number) => {
+  // Atualiza mugshot do próprio jogador quando recebido do client
+  useNuiEvent("ui:setPlayerMugshot", (mugshot: string) => {
     setUserProfile((p) => ({
       ...p,
-      photo: newPhoto,
+      mugshot,
     }));
   });
   useNuiEvent("ui:setTaskProgress", (newProgress) => {
