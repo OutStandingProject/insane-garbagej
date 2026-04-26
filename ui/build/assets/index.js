@@ -154,9 +154,11 @@ function renderTasks() {
 
 /* ============================================================
    INVITE MODAL
+   Nota: o convite e enviado via TriggerServerEvent no client.lua
+   A NUI apenas notifica o client.lua atraves de post('nui:invitePlayer')
    ============================================================ */
 (function setupInviteModal() {
-  /* Inject modal HTML once */
+  /* Inject modal HTML — input e botao em linhas separadas */
   const modalHTML = `
     <div id="inviteModal">
       <div id="inviteBackdrop"></div>
@@ -164,10 +166,8 @@ function renderTasks() {
         <button id="inviteCloseBtn" aria-label="Fechar">&#x2715;</button>
         <h3 id="inviteTitle">Convidar para Lobby</h3>
         <p>Insere o ID do jogador que queres convidar.</p>
-        <div id="inviteInputRow">
-          <input id="inviteIdInput" type="number" min="1" placeholder="ID do jogador" />
-          <button id="inviteSendBtn">Convidar</button>
-        </div>
+        <input id="inviteIdInput" type="number" min="1" placeholder="ID do jogador" />
+        <button id="inviteSendBtn">Convidar</button>
         <div id="inviteFeedback"></div>
       </div>
     </div>
@@ -202,6 +202,7 @@ function renderTasks() {
     }
     feedback.textContent = 'A enviar convite...';
     feedback.className = '';
+    /* Notifica o client.lua que deve fazer TriggerServerEvent */
     post('nui:invitePlayer', { targetId: id })
       .then(res => {
         if (res && res.success === false) {
