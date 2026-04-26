@@ -55,22 +55,28 @@ function client.SendReactMessage(action, data)
 end
 
 --- Gera o headshot (mugshot) nativo do GTA V para o ped local.
---- Retorna o txd string que pode ser usado como src na NUI.
+--- Usa a native correta: RegisterPedHeadshot
+--- Retorna o txd string que pode ser usado com img:// na NUI.
 ---@return string
 local function generatePlayerHeadshot()
     local ped = cache.ped
-    local handle = RegisterPedHeadshotHandle(ped)
+    if not ped or not DoesEntityExist(ped) then return "" end
+
+    local handle = RegisterPedHeadshot(ped)
+    if not handle or handle == 0 then return "" end
+
     local timeout = 0
     while not IsPedHeadshotReady(handle) and timeout < 100 do
         Citizen.Wait(50)
         timeout = timeout + 1
     end
+
     if IsPedHeadshotReady(handle) then
         local txd = GetPedHeadshotTxdString(handle)
-        -- Não unregister imediatamente para a NUI conseguir carregar a imagem
-        -- O GTA limpa automaticamente quando o resource reinicia
+        -- Nao unregister imediatamente para a NUI conseguir carregar a imagem
         return txd or ""
     end
+
     UnregisterPedHeadshot(handle)
     return ""
 end
@@ -182,7 +188,6 @@ local function playDutyClothingSequence(labelText)
         local originalCoords = GetEntityCoords(playerPed)
         local originalHeading = GetEntityHeading(playerPed)
 
-        -- Freeze total e invisível
         FreezeEntityPosition(playerPed, true)
         SetEntityVisible(playerPed, false, false)
         DisplayRadar(false)
@@ -201,11 +206,11 @@ local function playDutyClothingSequence(labelText)
             local startTime = GetGameTimer()
             while not camDone do
                 local elapsed = (GetGameTimer() - startTime) / 1000.0
-                local offsetZ = math.sin(elapsed * 7.5) * 0.2 -- velocidade 2.5, amplitude 0.3
+                local offsetZ = math.sin(elapsed * 7.5) * 0.2
 
                 DrawMarker(
                     2,
-                    -328.0, -1538.83, 32.3 + offsetZ, -- Z animado
+                    -328.0, -1538.83, 32.3 + offsetZ,
                     0.0, 0.0, 0.0,
                     0.0, 180.0, 0.0,
                     0.5, 0.5, 0.5,
@@ -216,11 +221,9 @@ local function playDutyClothingSequence(labelText)
             end
         end)
 
-        -- Blackscreen inicial
         DoScreenFadeOut(500)
         Citizen.Wait(500)
 
-        -- Teleporta e posiciona câmera com ecrã preto
         SetEntityCoords(playerPed, -325.39, -1535.83, 31.43, false, false, false, false)
         SetEntityHeading(playerPed, 128.49)
         Citizen.Wait(300)
@@ -231,7 +234,6 @@ local function playDutyClothingSequence(labelText)
         SetCamFov(cam, 75.0)
         RenderScriptCams(true, false, 0, true, false)
 
-        -- Fade in para revelar o local
         DoScreenFadeIn(500)
         Citizen.Wait(500)
 
@@ -239,16 +241,13 @@ local function playDutyClothingSequence(labelText)
 
         Citizen.Wait(3000)
 
-        -- Destrói câmera primeiro
         camDone = true
         RenderScriptCams(false, false, 0, true, false)
         DestroyCam(cam, false)
 
-        -- Blackscreen imediatamente antes do teleporte
         DoScreenFadeOut(300)
-        Citizen.Wait(300) -- aguarda ecrã ficar preto
+        Citizen.Wait(300)
 
-        -- Teleporte acontece com ecrã preto
         SetEntityCoords(playerPed, originalCoords.x, originalCoords.y, originalCoords.z, false, false, false, false)
         SetEntityHeading(playerPed, originalHeading)
         SetEntityVisible(playerPed, true, false)
@@ -256,10 +255,8 @@ local function playDutyClothingSequence(labelText)
         DisplayRadar(true)
         DisplayHud(true)
 
-        -- Pequena pausa para garantir que o jogo carregou a posição
         Citizen.Wait(1000)
 
-        -- Fade in para revelar o player já no duty
         DoScreenFadeIn(500)
     end
 
@@ -314,25 +311,27 @@ local function openMenu()
         client.onDuty = true
         client.workingPoint = client.onDuty and 1
     end
+
+    -- Busca o perfil do servidor
     local userProfile = lib.callback.await(_e('server:getPlayerProfile'), false)
     userProfile.source = cache.serverId
     userProfile.level = getUserLevel(userProfile.exp)
     userProfile.nextLevelExp = getNextLevelExp(userProfile.exp)
 
-    -- Gerar headshot nativo do GTA V (mugshot do ped atual)
-    Citizen.CreateThread(function()
-        local mugshot = generatePlayerHeadshot()
-        userProfile.mugshot = mugshot or ""
-        client.SendReactMessage('ui:setUserProfile', userProfile)
-        -- Envia também separadamente para atualizar só o mugshot caso o perfil já esteja carregado
-        client.SendReactMessage('ui:setPlayerMugshot', mugshot or "")
-    end)
+    -- Gerar headshot ANTES de abrir a UI (evita race condition)
+    -- Usa RegisterPedHeadshot (native correta no FiveM)
+    local mugshot = generatePlayerHeadshot()
+    userProfile.mugshot = mugshot or ""
 
+    -- Envia o perfil completo (com mugshot ja incluido) e abre a UI
+    client.SendReactMessage('ui:setUserProfile', userProfile)
     client.SendReactMessage('ui:setVisible', true)
     SetNuiFocus(true, true)
+
+    -- Carrega os ranks em paralelo
     lib.callback(_e('server:GetRanks'), false, function(data)
         if data then
-            local function getUserLevel(experience)
+            local function getUserLevelLocal(experience)
                 for lvl, requireRep in pairs(Config.JobOptions.ranks) do
                     if experience < requireRep then return math.max(0, lvl - 1) end
                 end
@@ -340,9 +339,9 @@ local function openMenu()
             end
 
             local filteredData = {}
-            for key, value in pairs(data) do
-                if value.exp > 0 then
-                    value.level = getUserLevel(value.exp)
+            for _, value in pairs(data) do
+                if value.exp and value.exp > 0 then
+                    value.level = getUserLevelLocal(value.exp)
                     table.insert(filteredData, value)
                 end
             end
@@ -853,10 +852,8 @@ RegisterNetEvent(_e('client:onTaskStart'), function(data)
     client.lobby.goals = data.goals
     client.lobby.taskProgress = 0
     client.SendReactMessage('ui:setCurrentLobby', client.lobby)
-    --[[ Close UI ]]
     client.SendReactMessage('ui:setVisible', false)
     SetNuiFocus(false, false)
-    --[[ End Close UI ]]
     SetupTask(data.taskType)
     createInformationMarkers()
 end)
@@ -888,7 +885,6 @@ RegisterNetEvent(_e('client:OnTaskVehicleCreated'), function(netId, type)
         sprite = 318,
         title = locale('task_vehicle')
     })
-    --[[ Debug ]]
     Utils.debug('Vehicle Created|Entity:', vehicle)
 end)
 
@@ -899,7 +895,6 @@ RegisterNetEvent(_e('client:updateTaskProgress'), function(newProgress)
 end)
 
 RegisterNetEvent(_e('client:DeleteTaskObject'), function(index)
-    --[[ Debug ]]
     if index then
         Utils.debug("triggered client:DeleteTaskObject", 'index: ' .. index)
     end
@@ -1601,6 +1596,7 @@ RegisterNetEvent(_e('client:StartLastStep'), function()
                             DrawMarker(2,
                                 targetCoords.x, targetCoords.y, targetCoords.z + .5,
                                 0.0, 0.0, 0.0,
+
                                 0.0, 180.0, 0.0,
                                 .5, .5, .5,
                                 168, 255, 202, 100,
@@ -1647,7 +1643,6 @@ RegisterNetEvent(_e('client:SpawnLastStepBags'), function()
         local vehicleHeading = GetEntityHeading(taskVehicle)
         local backX = backPos.x - math.sin(math.rad(vehicleHeading)) * distanceBehind
         local backY = backPos.y + math.cos(math.rad(vehicleHeading)) * distanceBehind
-
 
         local localBags = {}
 
