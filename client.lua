@@ -668,6 +668,43 @@ end, false)
 
 RegisterNetEvent(_e('client:openMenu'), openMenu)
 
+-- ============================================================
+-- NET EVENT: Receber convite de lobby enviado via NUI (+)
+-- Disparado por: server.lua -> TriggerClientEvent('insane-garbagej:receiveLobbyInvite', targetId, src)
+-- ============================================================
+RegisterNetEvent('insane-garbagej:receiveLobbyInvite', function(inviterServerId)
+    -- Evita receber convite se já estiver numa lobby
+    if client.inLobby then
+        Utils.Notify('Já estás numa lobby.', 'error')
+        return
+    end
+
+    local inviterName = GetPlayerName(GetPlayerFromServerId(inviterServerId)) or ('Jogador #' .. inviterServerId)
+
+    -- Guarda o convite para o comando AcceptInvite ainda funcionar
+    -- (Lobby.AcceptLastInvite usa o seu próprio estado interno)
+    Lobby.SetLastInvite(inviterServerId)
+
+    -- Menu de aceitar / recusar com ox_lib
+    local choice = lib.alertDialog({
+        header  = '🗑️ Garbage Job — Convite de Lobby',
+        content = ('**%s** convidou-te para a sua lobby.\n\nAceitas o convite?'):format(inviterName),
+        centered = true,
+        cancel   = true,
+        labels   = {
+            confirm = 'Aceitar',
+            cancel  = 'Recusar',
+        },
+    })
+
+    if choice == 'confirm' then
+        Lobby.AcceptLastInvite()
+        Utils.Notify(('Entraste na lobby de %s!'):format(inviterName), 'success')
+    else
+        Utils.Notify('Convite recusado.', 'inform')
+    end
+end)
+
 -- Player load/unload
 function client.SetupUI()
     if client.uiLoad then return end
