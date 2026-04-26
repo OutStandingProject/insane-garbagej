@@ -54,11 +54,14 @@ function client.SendReactMessage(action, data)
     SendNUIMessage({ action = action, data = data })
 end
 
---- Tira screenshot do ped do jogador usando screenshot-basic.
---- Chama o callback com a URL da imagem (https://...) ou string vazia.
+--- Tira mugshot tipo cartão de cidadão:
+--- - Guarda posição/heading original do ped
+--- - Força o ped a olhar para a câmara (heading 180° da câmara)
+--- - Câmara frontal fixa com FOV apertado (retrato)
+--- - Screenshot via screenshot-basic (dataURL base64)
+--- - Restaura heading original sem mover o ped
 ---@param cb fun(url: string)
-local function takePlayerScreenshot(cb)
-    -- Verifica se o resource screenshot-basic existe e está a correr
+local function takeIDCardScreenshot(cb)
     if GetResourceState('screenshot-basic') ~= 'started' then
         cb('')
         return
@@ -70,79 +73,45 @@ local function takePlayerScreenshot(cb)
         return
     end
 
-    -- Posiciona câmara frontal para capturar o rosto/torso do ped
-    local coords   = GetEntityCoords(ped)
-    local heading  = GetEntityHeading(ped)
-    local headingRad = math.rad(heading)
+    -- Guarda estado original
+    local coords          = GetEntityCoords(ped)
+    local originalHeading = GetEntityHeading(ped)
 
-    -- Offset 1.2m à frente do ped, 0.7m acima
-    local camX = coords.x - math.sin(headingRad) * 1.2
-    local camY = coords.y - math.cos(headingRad) * 1.2
-    local camZ = coords.z + 0.7
+    -- A câmara fica 1.3m à frente do ped no eixo Y local
+    -- Independente do heading — calcula posição absoluta
+    local camOffsetDist = 1.3
+    local camHeight     = 0.65   -- altura dos olhos/peito
+    local camHeadingRad = math.rad(originalHeading)
 
+    -- Câmara posicionada à frente do ped (na direção que ele está a olhar)
+    local camX = coords.x + math.sin(camHeadingRad) * camOffsetDist
+    local camY = coords.y + math.cos(camHeadingRad) * camOffsetDist
+    local camZ = coords.z + camHeight
+
+    -- Forçar o ped a olhar exatamente para a câmara (heading oposto)
+    -- +180° converte a direção da câmara para a direção que o ped deve olhar
+    local pedFaceHeading = (originalHeading + 180.0) % 360.0
+    SetEntityHeading(ped, pedFaceHeading)
+
+    -- Cria câmara de retrato (FOV apertado = menos distorção, mais tipo foto ID)
     local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
     SetCamCoord(cam, camX, camY, camZ)
-    PointCamAtCoord(cam, coords.x, coords.y, coords.z + 0.6)
-    SetCamFov(cam, 40.0)
+    -- Aponta câmara para o centro do torso/pescoço do ped
+    PointCamAtCoord(cam, coords.x, coords.y, coords.z + 0.62)
+    SetCamFov(cam, 28.0)   -- FOV 28° = retrato compacto tipo foto ID
     RenderScriptCams(true, false, 0, true, false)
 
-    -- Aguarda 2 frames para a câmara estabilizar
-    Citizen.Wait(100)
+    -- Aguarda a câmara e o ped estabilizarem (animação de virar a cabeça)
+    Citizen.Wait(250)
 
-    exports['screenshot-basic']:requestScreenshotUpload(
-        'https://api.imgur.com/3/image',  -- pode ser substituído por qualquer endpoint
-        'image',
-        { headers = { Authorization = 'Client-ID ' .. (GetConvar('imgur_client_id', 'null')) } },
-        function(data)
-            RenderScriptCams(false, false, 0, true, false)
-            DestroyCam(cam, false)
-
-            local ok, result = pcall(json.decode, data)
-            if ok and result and result.data and result.data.link then
-                cb(result.data.link)
-            else
-                cb('')
-            end
-        end
-    )
-end
-
---- Versao simples: usa takeScreenshot (sem upload) que devolve dataURL base64.
---- Mais fiavel porque nao depende de servico externo.
----@param cb fun(url: string)
-local function takePlayerScreenshotLocal(cb)
-    if GetResourceState('screenshot-basic') ~= 'started' then
-        cb('')
-        return
-    end
-
-    local ped = cache.ped
-    if not ped or not DoesEntityExist(ped) then
-        cb('')
-        return
-    end
-
-    local coords     = GetEntityCoords(ped)
-    local heading    = GetEntityHeading(ped)
-    local headingRad = math.rad(heading)
-
-    local camX = coords.x - math.sin(headingRad) * 1.2
-    local camY = coords.y - math.cos(headingRad) * 1.2
-    local camZ = coords.z + 0.7
-
-    local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
-    SetCamCoord(cam, camX, camY, camZ)
-    PointCamAtCoord(cam, coords.x, coords.y, coords.z + 0.6)
-    SetCamFov(cam, 40.0)
-    RenderScriptCams(true, false, 0, true, false)
-
-    Citizen.Wait(100)
-
-    -- takeScreenshot devolve dataURL (data:image/png;base64,...)
-    -- Compativel com qualquer versao do screenshot-basic
     exports['screenshot-basic']:requestScreenshot(function(data)
+        -- Restaura câmara do jogo
         RenderScriptCams(false, false, 0, true, false)
         DestroyCam(cam, false)
+
+        -- Restaura heading original do ped
+        SetEntityHeading(ped, originalHeading)
+
         cb(data or '')
     end)
 end
@@ -389,7 +358,8 @@ local function openMenu()
     local defaultLocale = GetConvar('ox:locale', 'en')
     local localeData    = lib.loadJson(('locales.%s'):format(defaultLocale))
 
-    -- Abre o menu imediatamente com o nome/XP/level (sem foto por enquanto)
+    -- Abre o menu imediatamente com o nome/XP/level
+    -- mugshot usa o último valor guardado (ou vazio se primeira vez)
     client.SendReactMessage('ui:openMenu', {
         setLocale = localeData and localeData.ui or {},
         setTasks  = Config.Tasks,
@@ -406,20 +376,22 @@ local function openMenu()
 
     SetNuiFocus(true, true)
 
-    -- Tira screenshot em background e envia quando estiver pronta
-    -- Usa a funcao local (dataURL base64) que nao depende de servico externo
-    Citizen.CreateThread(function()
-        takePlayerScreenshotLocal(function(dataUrl)
-            if dataUrl and dataUrl ~= '' then
-                client.currentMugshot = dataUrl
-                client.SendReactMessage('ui:setPlayerMugshot', dataUrl)
-                -- Sync com outros membros do lobby
-                if client.inLobby and client.lobby and client.lobby.id then
-                    TriggerServerEvent(_e('server:syncMugshot'), dataUrl)
+    -- Tira foto tipo ID card em background e envia quando estiver pronta
+    -- Só tira nova foto se ainda não tiver uma guardada nesta sessão
+    if not client.currentMugshot or client.currentMugshot == '' then
+        Citizen.CreateThread(function()
+            takeIDCardScreenshot(function(dataUrl)
+                if dataUrl and dataUrl ~= '' then
+                    client.currentMugshot = dataUrl
+                    client.SendReactMessage('ui:setPlayerMugshot', dataUrl)
+                    -- Sync com outros membros do lobby
+                    if client.inLobby and client.lobby and client.lobby.id then
+                        TriggerServerEvent(_e('server:syncMugshot'), dataUrl)
+                    end
                 end
-            end
+            end)
         end)
-    end)
+    end
 end
 
 --- Toggles the player's job duty status and handles related actions.
