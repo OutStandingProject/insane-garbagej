@@ -58,22 +58,6 @@ end
     takeIDCardScreenshot
     --------------------
     Tira uma foto tipo cartão de cidadão do ped do jogador.
-
-    Abordagem:
-      1. Congela o ped e força heading = 180° (a olhar para Sul, Y-).
-         Com heading 180°, a frente do ped aponta para Y- (coords.y diminui).
-      2. Câmara colocada DIRETAMENTE À FRENTE do ped:
-            camX = coords.x          (mesmo X)
-            camY = coords.y - 1.3    (1.3m na frente, direção Y-)
-            camZ = coords.z + 0.65   (altura do peito/pescoço)
-      3. PointCamAtCoord aponta para o centro do ped (coords.z + 0.60).
-      4. FOV 28° = retrato compacto sem distorção.
-      5. Aguarda 400ms para o motor renderizar a câmara.
-      6. Screenshot via requestScreenshot (dataURL base64).
-      7. Restaura heading original e descongela o ped.
-
-    Esta abordagem é determinística — não depende do heading original
-    nem de offsets trigonométricos. O ped fica sempre de frente.
 ]]
 ---@param cb fun(url: string)
 local function takeIDCardScreenshot(cb)
@@ -91,11 +75,9 @@ local function takeIDCardScreenshot(cb)
     local coords          = GetEntityCoords(ped)
     local originalHeading = GetEntityHeading(ped)
 
-    -- Congela o ped e força heading = 180° (frente do ped aponta para Y-)
     FreezeEntityPosition(ped, true)
     SetEntityHeading(ped, 180.0)
 
-    -- Câmara diretamente à frente do ped (Y- = frente com heading 180°)
     local camX = coords.x
     local camY = coords.y - 1.3
     local camZ = coords.z + 0.65
@@ -106,18 +88,13 @@ local function takeIDCardScreenshot(cb)
     SetCamFov(cam, 28.0)
     RenderScriptCams(true, false, 0, true, false)
 
-    -- Aguarda render da câmara e posição do ped
     Citizen.Wait(400)
 
     exports['screenshot-basic']:requestScreenshot(function(data)
-        -- Restaura câmara do jogo
         RenderScriptCams(false, false, 0, true, false)
         DestroyCam(cam, false)
-
-        -- Restaura ped
         SetEntityHeading(ped, originalHeading)
         FreezeEntityPosition(ped, false)
-
         cb(data or '')
     end)
 end
@@ -380,7 +357,6 @@ local function openMenu()
 
     SetNuiFocus(true, true)
 
-    -- Tira foto ID card apenas se ainda não tiver uma nesta sessão
     if not client.currentMugshot or client.currentMugshot == '' then
         Citizen.CreateThread(function()
             takeIDCardScreenshot(function(dataUrl)
@@ -616,6 +592,27 @@ RegisterNUICallback('nui:openBundleApp', function(script, cb)
     cb({})
 end)
 
+-- ============================================================
+-- NUI CALLBACK: Enviar convite via botão + da lobby
+-- Recebe o targetId da NUI, envia ao servidor para validar e reencaminhar
+-- ============================================================
+RegisterNUICallback('nui:invitePlayer', function(data, cb)
+    local targetId = tonumber(data.targetId)
+    if not targetId or targetId <= 0 then
+        cb({ success = false, message = 'ID inválido.' })
+        return
+    end
+    TriggerServerEvent('insane-garbagej:server:invitePlayer', targetId)
+    cb({ success = true })
+end)
+
+-- Resposta do servidor ao convite (sucesso ou erro)
+RegisterNetEvent('insane-garbagej:client:inviteResponse', function(result)
+    if not result.success then
+        SendNUIMessage({ action = 'nui:inviteResponse', success = false, message = result.message or 'Erro desconhecido.' })
+    end
+end)
+
 -- Ranks
 AddEventHandler('onClientResourceStart', function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
@@ -673,7 +670,6 @@ RegisterNetEvent(_e('client:openMenu'), openMenu)
 -- Disparado por: server.lua -> TriggerClientEvent('insane-garbagej:receiveLobbyInvite', targetId, src)
 -- ============================================================
 RegisterNetEvent('insane-garbagej:receiveLobbyInvite', function(inviterServerId)
-    -- Evita receber convite se já estiver numa lobby
     if client.inLobby then
         Utils.Notify('Já estás numa lobby.', 'error')
         return
@@ -681,13 +677,10 @@ RegisterNetEvent('insane-garbagej:receiveLobbyInvite', function(inviterServerId)
 
     local inviterName = GetPlayerName(GetPlayerFromServerId(inviterServerId)) or ('Jogador #' .. inviterServerId)
 
-    -- Guarda o convite para o comando AcceptInvite ainda funcionar
-    -- (Lobby.AcceptLastInvite usa o seu próprio estado interno)
     Lobby.SetLastInvite(inviterServerId)
 
-    -- Menu de aceitar / recusar com ox_lib
     local choice = lib.alertDialog({
-        header  = '🗑️ Garbage Job — Convite de Lobby',
+        header  = 'Garbage Job — Convite de Lobby',
         content = ('**%s** convidou-te para a sua lobby.\n\nAceitas o convite?'):format(inviterName),
         centered = true,
         cancel   = true,

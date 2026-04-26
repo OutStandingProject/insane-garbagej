@@ -189,20 +189,17 @@ lib.callback.register(_e('server:GetRanks'), function(source)
 end)
 
 -- ============================================================
--- NUI: Convidar jogador para a lobby pelo ID
--- Recebido de: ui/build/assets/index.js -> post('nui:invitePlayer', { targetId: id })
+-- SERVER NET EVENT: Convidar jogador para a lobby pelo ID
+-- Chamado por: client.lua -> TriggerServerEvent('insane-garbagej:server:invitePlayer', targetId)
 -- ============================================================
-RegisterNUICallback('nui:invitePlayer', function(data, cb)
+RegisterNetEvent('insane-garbagej:server:invitePlayer', function(targetId)
     local src = source
-    local targetId = tonumber(data.targetId)
 
     if not targetId or not GetPlayerName(targetId) then
-        cb({ success = false, message = 'Jogador nao encontrado.' })
+        TriggerClientEvent('insane-garbagej:client:inviteResponse', src, { success = false, message = 'Jogador nao encontrado.' })
         return
     end
 
-    -- Envia o convite ao jogador alvo via ClientEvent
     TriggerClientEvent('insane-garbagej:receiveLobbyInvite', targetId, src)
-
-    cb({ success = true })
+    TriggerClientEvent('insane-garbagej:client:inviteResponse', src, { success = true })
 end)
