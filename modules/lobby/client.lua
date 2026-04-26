@@ -42,6 +42,12 @@ function Lobby.Invite(targetSource)
     return true
 end
 
+--- Define o ultimo convite recebido (usado pelo fluxo NUI de convite por ID)
+--- @param lobbyId any ID da lobby ou server ID do lider
+function Lobby.SetLastInvite(lobbyId)
+    lastReceiveInvite = lobbyId
+end
+
 function Lobby.AcceptLastInvite()
     if not lastReceiveInvite then return end
     local response = lib.callback.await(_e('server:JoinLobby'), false, lastReceiveInvite)
