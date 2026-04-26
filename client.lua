@@ -47,6 +47,10 @@ local lastDumpster = {
     blip = nil, coords = nil, clean = 0, attached = false, entity = nil,
 }
 
+-- Guarda o handle do headshot de forma persistente para evitar garbage collection
+-- enquanto a NUI ainda está a usar a textura.
+local _headshotHandle = nil
+
 ---Sends message to the ReactUI.
 ---@param action string
 ---@param data any
@@ -55,12 +59,19 @@ function client.SendReactMessage(action, data)
 end
 
 --- Gera o headshot (mugshot) nativo do GTA V para o ped local.
---- Usa a native correta: RegisterPedHeadshot
+--- Guarda o handle numa variável persistente para evitar que o GC do Lua
+--- destrua a textura antes de a NUI a conseguir carregar.
 --- Retorna o txd string que pode ser usado com img:// na NUI.
 ---@return string
 local function generatePlayerHeadshot()
     local ped = cache.ped
     if not ped or not DoesEntityExist(ped) then return "" end
+
+    -- Liberta handle anterior se existir
+    if _headshotHandle and _headshotHandle ~= 0 then
+        UnregisterPedHeadshot(_headshotHandle)
+        _headshotHandle = nil
+    end
 
     local handle = RegisterPedHeadshot(ped)
     if not handle or handle == 0 then return "" end
@@ -73,12 +84,24 @@ local function generatePlayerHeadshot()
 
     if IsPedHeadshotReady(handle) then
         local txd = GetPedHeadshotTxdString(handle)
-        -- Nao unregister imediatamente para a NUI conseguir carregar a imagem
-        return txd or ""
+        if txd and txd ~= "" then
+            -- Guarda handle persistente — NAO unregister aqui,
+            -- a NUI precisa que o txd se mantenha vivo.
+            _headshotHandle = handle
+            return txd
+        end
     end
 
     UnregisterPedHeadshot(handle)
     return ""
+end
+
+--- Liberta o handle do headshot guardado (chamado ao fechar o menu).
+local function releaseHeadshotHandle()
+    if _headshotHandle and _headshotHandle ~= 0 then
+        UnregisterPedHeadshot(_headshotHandle)
+        _headshotHandle = nil
+    end
 end
 
 --- Calculates the user's level on experience
@@ -318,12 +341,17 @@ local function openMenu()
     userProfile.level = getUserLevel(userProfile.exp)
     userProfile.nextLevelExp = getNextLevelExp(userProfile.exp)
 
-    -- Gerar headshot ANTES de abrir a UI (evita race condition)
-    -- Usa RegisterPedHeadshot (native correta no FiveM)
+    -- Garante que characterName está preenchido (fallback para o nome do servidor)
+    if not userProfile.characterName or userProfile.characterName == "" then
+        userProfile.characterName = server.GetPlayerCharacterName and server.GetPlayerCharacterName(cache.serverId) or "Sanitation Worker"
+    end
+
+    -- Gerar headshot ANTES de abrir a UI (evita race condition).
+    -- O handle é guardado em _headshotHandle para nao ser garbage collected.
     local mugshot = generatePlayerHeadshot()
     userProfile.mugshot = mugshot or ""
 
-    -- Envia o perfil completo (com mugshot ja incluido) e abre a UI
+    -- Envia o perfil completo (com mugshot e characterName) e abre a UI
     client.SendReactMessage('ui:setUserProfile', userProfile)
     client.SendReactMessage('ui:setVisible', true)
     SetNuiFocus(true, true)
@@ -705,6 +733,7 @@ function client.onPlayerLoad(isLoggedIn)
         deleteCreatedObjects()
         deleteTaskVehicle()
         deletePedHands()
+        releaseHeadshotHandle()
         if client.onDuty then
             toggleJobDuty()
         end
@@ -774,6 +803,8 @@ end)
 RegisterNUICallback('nui:hideFrame', function(_, resultCallback)
     client.SendReactMessage('ui:setVisible', false)
     SetNuiFocus(false, false)
+    -- Liberta o handle do headshot ao fechar o menu
+    releaseHeadshotHandle()
     resultCallback(true)
 end)
 
