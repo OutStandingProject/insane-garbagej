@@ -1,4 +1,4 @@
-/* insane-garbagej UI v4 - screenshot-basic dataURL */
+/* insane-garbagej UI v5 - lobby members + leave button */
 const resourceName = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'nui-resource';
 const body = document.body;
 const state = { visible: false, tasks: [], userProfile: {}, locale: {}, lobby: [], ranks: [] };
@@ -58,8 +58,6 @@ function resolvePlayerName(p) {
   return p.characterName || p.name || 'Sanitation Worker';
 }
 
-/* Aplica a imagem (dataURL base64 ou https://) ao elemento.
-   Aceita qualquer string que comece com data: ou http — sem img:// */
 function applyAvatar(el, src) {
   if (!el) return;
   if (src && typeof src === 'string' && src.length > 0) {
@@ -90,7 +88,6 @@ function renderProfile() {
   const lbL = $('lobbyLabel'); if (lbL) lbL.textContent = ui('lobby', 'Lobby');
   const rkL = $('rankLabel');  if (rkL) rkL.textContent = ui('top_reputation', 'Top Reputation');
 
-  /* Avatar principal — aceita dataURL ou https:// */
   const avatarEl = document.querySelector('.avatar');
   const imgSrc = p.mugshot || p.photo || null;
   applyAvatar(avatarEl, imgSrc);
@@ -154,11 +151,8 @@ function renderTasks() {
 
 /* ============================================================
    INVITE MODAL
-   Nota: o convite e enviado via TriggerServerEvent no client.lua
-   A NUI apenas notifica o client.lua atraves de post('nui:invitePlayer')
    ============================================================ */
 (function setupInviteModal() {
-  /* Inject modal HTML — input e botao em linhas separadas */
   const modalHTML = `
     <div id="inviteModal">
       <div id="inviteBackdrop"></div>
@@ -202,7 +196,6 @@ function renderTasks() {
     }
     feedback.textContent = 'A enviar convite...';
     feedback.className = '';
-    /* Notifica o client.lua que deve fazer TriggerServerEvent */
     post('nui:invitePlayer', { targetId: id })
       .then(res => {
         if (res && res.success === false) {
@@ -228,24 +221,75 @@ function renderTasks() {
     if (e.key === 'Escape') closeInviteModal();
   });
 
-  /* Expose opener so renderLobby can attach it to + buttons */
   window._openInviteModal = openInviteModal;
 })();
 
-/* === LOBBY — slot 0 always the player, empty slots show + button === */
+/* ============================================================
+   LEAVE LOBBY MODAL
+   ============================================================ */
+(function setupLeaveModal() {
+  const modalHTML = `
+    <div id="leaveModal">
+      <div id="leaveBackdrop"></div>
+      <div id="leaveBox" role="dialog" aria-modal="true" aria-labelledby="leaveTitle">
+        <h3 id="leaveTitle">&#x26A0; Sair da Lobby</h3>
+        <p>Tens a certeza que queres sair?<br><span style="opacity:.65;font-size:10px;">Os restantes jogadores mantêm-se juntos e um novo líder será promovido.</span></p>
+        <div class="leave-btns">
+          <button id="leaveCancelBtn">Cancelar</button>
+          <button id="leaveConfirmBtn">Sair</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+  const modal      = document.getElementById('leaveModal');
+  const backdrop   = document.getElementById('leaveBackdrop');
+  const cancelBtn  = document.getElementById('leaveCancelBtn');
+  const confirmBtn = document.getElementById('leaveConfirmBtn');
+
+  function openLeaveModal()  { modal.classList.add('open'); }
+  function closeLeaveModal() { modal.classList.remove('open'); }
+
+  function confirmLeave() {
+    closeLeaveModal();
+    post('nui:leaveLobby', {}).then(() => {
+      /* Limpa o lobby na UI — o servidor vai atualizar os restantes */
+      const self = (state.lobby || []).find(m => m && m.isSelf);
+      state.lobby = self ? [{ ...self, isLeader: true }] : [];
+      renderLobby(state.lobby);
+    });
+  }
+
+  cancelBtn.addEventListener('click', closeLeaveModal);
+  backdrop.addEventListener('click', closeLeaveModal);
+  confirmBtn.addEventListener('click', confirmLeave);
+
+  window._openLeaveModal = openLeaveModal;
+})();
+
+/* === LOBBY — max 4 slots, slot 0 = jogador, slots vazios = botão + === */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
   const list = Array.isArray(members) ? members : [];
   const MAX = 4;
+
+  /* Mostra/esconde o botão de sair: só quando há mais de 1 membro */
+  const leaveBtn = document.getElementById('lobbyLeaveBtn');
+  if (leaveBtn) {
+    const filledCount = list.filter(m => m != null).length;
+    leaveBtn.style.display = filledCount > 1 ? 'flex' : 'none';
+  }
+
   slots.innerHTML = '';
   for (let i = 0; i < MAX; i++) {
     const m = list[i];
     const slot = document.createElement('div');
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
+
     if (m) {
-      /* Filled slot */
-      const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
+      /* Slot preenchido — avatar + nome + coroa se líder */
       const avatarDiv = document.createElement('div');
       avatarDiv.className = 'slot-avatar';
       const imgSrc = m.mugshot || m.photo || null;
@@ -254,14 +298,30 @@ function renderLobby(members) {
         avatarDiv.style.backgroundSize = 'cover';
         avatarDiv.style.backgroundPosition = 'center top';
       }
+
+      if (m.isLeader) {
+        const crown = document.createElement('span');
+        crown.className = 'slot-crown';
+        crown.innerHTML = '&#x1F451;';
+        slot.appendChild(crown);
+      }
+
       const nameDiv = document.createElement('div');
       nameDiv.className = 'slot-name';
       nameDiv.textContent = m.characterName || m.name || '';
-      slot.innerHTML = crown;
+
+      /* Badge "Eu" para o próprio jogador */
+      if (m.isSelf) {
+        const selfBadge = document.createElement('span');
+        selfBadge.className = 'slot-self-badge';
+        selfBadge.textContent = 'Eu';
+        avatarDiv.appendChild(selfBadge);
+      }
+
       slot.appendChild(avatarDiv);
       slot.appendChild(nameDiv);
     } else {
-      /* Empty slot — show + button in center */
+      /* Slot vazio — botão + */
       const avatarDiv = document.createElement('div');
       avatarDiv.className = 'slot-avatar';
       const plusBtn = document.createElement('button');
@@ -348,7 +408,6 @@ window.addEventListener('message', (ev) => {
       renderProfile();
       return;
 
-    /* Recebe dataURL (data:image/png;base64,...) ou https:// do screenshot-basic */
     case 'ui:setPlayerMugshot': {
       const url = typeof payload === 'string' ? payload : '';
       if (url.length > 0) {
@@ -369,11 +428,73 @@ window.addEventListener('message', (ev) => {
       setVisible(true);
       return;
 
-    case 'ui:setCurrentLobby':
+    case 'ui:setCurrentLobby': {
+      /* Payload pode ser um objeto lobby completo ou array de membros */
+      let incoming = [];
+      if (Array.isArray(payload)) {
+        incoming = payload;
+      } else if (payload && Array.isArray(payload.members)) {
+        incoming = payload.members;
+        /* Atualiza leaderId no state se disponível */
+        if (payload.leaderId != null) state.lobbyLeaderId = payload.leaderId;
+      }
+
+      /* Se payload vazio — jogador saiu da lobby, fica sozinho */
+      if (incoming.length === 0 && (!payload || Object.keys(payload).length === 0)) {
+        const selfMember = (state.lobby || []).find(m => m && m.isSelf);
+        state.lobby = selfMember ? [{ ...selfMember, isLeader: true }] : [];
+        state.lobbyLeaderId = null;
+        renderLobby(state.lobby);
+        return;
+      }
+
+      const selfSource = state.userProfile && state.userProfile.source;
+      const leaderId   = state.lobbyLeaderId || (incoming[0] && incoming[0].source);
+
+      const normalized = incoming.map(m => ({
+        ...m,
+        isLeader: m.source === leaderId || m.isLeader || false,
+        isSelf:   m.source === selfSource || m.isSelf || false,
+      }));
+
+      const selfMember = (state.lobby || []).find(m => m && m.isSelf);
+      const selfInIncoming = normalized.find(m => m.isSelf);
+
+      if (selfInIncoming) {
+        state.lobby = normalized;
+      } else if (selfMember) {
+        /* O próprio jogador não veio no payload — injeta-o no slot 0 */
+        state.lobby = [{ ...selfMember, isLeader: selfMember.source === leaderId }, ...normalized];
+      } else {
+        state.lobby = normalized;
+      }
+
+      renderLobby(state.lobby);
+      return;
+    }
+
     case 'ui:setLobbyMembers': {
       const incoming = Array.isArray(payload) ? payload : (payload.members || []);
+      const selfSource  = state.userProfile && state.userProfile.source;
+      const leaderId    = state.lobbyLeaderId || (incoming[0] && incoming[0].source);
+
+      const normalized = incoming.map(m => ({
+        ...m,
+        isLeader: m.source === leaderId || m.isLeader || false,
+        isSelf:   m.source === selfSource || m.isSelf || false,
+      }));
+
       const selfMember = (state.lobby || []).find(m => m && m.isSelf);
-      state.lobby = selfMember ? [selfMember, ...incoming.filter(m => m && !m.isSelf)] : incoming;
+      const selfInIncoming = normalized.find(m => m.isSelf);
+
+      if (selfInIncoming) {
+        state.lobby = normalized;
+      } else if (selfMember) {
+        state.lobby = [{ ...selfMember, isLeader: selfMember.source === leaderId }, ...normalized];
+      } else {
+        state.lobby = normalized;
+      }
+
       renderLobby(state.lobby);
       return;
     }
@@ -393,6 +514,16 @@ window.addEventListener('message', (ev) => {
 
 /* === Keyboard === */
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWindow(); });
+
+/* === Botão sair da lobby — ligado ao elemento HTML === */
+(function setupLeaveButton() {
+  const btn = document.getElementById('lobbyLeaveBtn');
+  if (!btn) return;
+  btn.style.display = 'none'; /* escondido por defeito */
+  btn.addEventListener('click', () => {
+    if (typeof window._openLeaveModal === 'function') window._openLeaveModal();
+  });
+})();
 
 /* === Init === */
 renderProfile();
