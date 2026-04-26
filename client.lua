@@ -47,8 +47,6 @@ local lastDumpster = {
     blip = nil, coords = nil, clean = 0, attached = false, entity = nil,
 }
 
-local _headshotHandle = nil
-
 ---Sends message to the ReactUI.
 ---@param action string
 ---@param data any
@@ -56,53 +54,97 @@ function client.SendReactMessage(action, data)
     SendNUIMessage({ action = action, data = data })
 end
 
---- Gera o headshot (mugshot) nativo do GTA V para o ped local.
---- Aguarda ate 5 segundos que o txd fique pronto.
----@return string
-local function generatePlayerHeadshot()
+--- Tira screenshot do ped do jogador usando screenshot-basic.
+--- Chama o callback com a URL da imagem (https://...) ou string vazia.
+---@param cb fun(url: string)
+local function takePlayerScreenshot(cb)
+    -- Verifica se o resource screenshot-basic existe e está a correr
+    if GetResourceState('screenshot-basic') ~= 'started' then
+        cb('')
+        return
+    end
+
     local ped = cache.ped
-    if not ped or not DoesEntityExist(ped) then return "" end
-
-    -- Liberta handle anterior
-    if _headshotHandle and _headshotHandle ~= 0 then
-        Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
-        _headshotHandle = nil
+    if not ped or not DoesEntityExist(ped) then
+        cb('')
+        return
     end
 
-    -- RegisterPedHeadshot
-    local handle = Citizen.InvokeNative(0x4462658788425018, ped)
-    if not handle or handle == 0 then return "" end
+    -- Posiciona câmara frontal para capturar o rosto/torso do ped
+    local coords   = GetEntityCoords(ped)
+    local heading  = GetEntityHeading(ped)
+    local headingRad = math.rad(heading)
 
-    -- Espera que fique pronto (IsPedHeadshotReady)
-    local timeout = 0
-    while not Citizen.InvokeNative(0x1F3F7683, handle) and timeout < 100 do
-        Citizen.Wait(50)
-        timeout = timeout + 1
-    end
+    -- Offset 1.2m à frente do ped, 0.7m acima
+    local camX = coords.x - math.sin(headingRad) * 1.2
+    local camY = coords.y - math.cos(headingRad) * 1.2
+    local camZ = coords.z + 0.7
 
-    if not Citizen.InvokeNative(0x1F3F7683, handle) then
-        Citizen.InvokeNative(0xD4F7B05C, handle)
-        return ""
-    end
+    local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
+    SetCamCoord(cam, camX, camY, camZ)
+    PointCamAtCoord(cam, coords.x, coords.y, coords.z + 0.6)
+    SetCamFov(cam, 40.0)
+    RenderScriptCams(true, false, 0, true, false)
 
-    -- GetPedHeadshotTxdString
-    local txd = Citizen.InvokeNative(0xDB4CAEDBCE1C2728, handle, Citizen.ResultAsString())
-    if txd and txd ~= "" then
-        _headshotHandle = handle  -- Guarda para nao ser libertado
-        return txd
-    end
+    -- Aguarda 2 frames para a câmara estabilizar
+    Citizen.Wait(100)
 
-    Citizen.InvokeNative(0xD4F7B05C, handle)
-    return ""
+    exports['screenshot-basic']:requestScreenshotUpload(
+        'https://api.imgur.com/3/image',  -- pode ser substituído por qualquer endpoint
+        'image',
+        { headers = { Authorization = 'Client-ID ' .. (GetConvar('imgur_client_id', 'null')) } },
+        function(data)
+            RenderScriptCams(false, false, 0, true, false)
+            DestroyCam(cam, false)
+
+            local ok, result = pcall(json.decode, data)
+            if ok and result and result.data and result.data.link then
+                cb(result.data.link)
+            else
+                cb('')
+            end
+        end
+    )
 end
 
---- Liberta o handle do headshot guardado (chamado ao fechar o menu).
-local function releaseHeadshotHandle()
-    if _headshotHandle and _headshotHandle ~= 0 then
-        Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
-        _headshotHandle = nil
-        client.currentMugshot = nil
+--- Versao simples: usa takeScreenshot (sem upload) que devolve dataURL base64.
+--- Mais fiavel porque nao depende de servico externo.
+---@param cb fun(url: string)
+local function takePlayerScreenshotLocal(cb)
+    if GetResourceState('screenshot-basic') ~= 'started' then
+        cb('')
+        return
     end
+
+    local ped = cache.ped
+    if not ped or not DoesEntityExist(ped) then
+        cb('')
+        return
+    end
+
+    local coords     = GetEntityCoords(ped)
+    local heading    = GetEntityHeading(ped)
+    local headingRad = math.rad(heading)
+
+    local camX = coords.x - math.sin(headingRad) * 1.2
+    local camY = coords.y - math.cos(headingRad) * 1.2
+    local camZ = coords.z + 0.7
+
+    local cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
+    SetCamCoord(cam, camX, camY, camZ)
+    PointCamAtCoord(cam, coords.x, coords.y, coords.z + 0.6)
+    SetCamFov(cam, 40.0)
+    RenderScriptCams(true, false, 0, true, false)
+
+    Citizen.Wait(100)
+
+    -- takeScreenshot devolve dataURL (data:image/png;base64,...)
+    -- Compativel com qualquer versao do screenshot-basic
+    exports['screenshot-basic']:requestScreenshot(function(data)
+        RenderScriptCams(false, false, 0, true, false)
+        DestroyCam(cam, false)
+        cb(data or '')
+    end)
 end
 
 --- Calculates the user's level on experience
@@ -344,14 +386,10 @@ local function openMenu()
     local level      = getUserLevel(exp)
     local playerSrc  = GetPlayerServerId(PlayerId())
 
-    -- Gera o mugshot ANTES de abrir o menu
-    local mugshotTxd = generatePlayerHeadshot()
-    client.currentMugshot = mugshotTxd
-
     local defaultLocale = GetConvar('ox:locale', 'en')
-    local localeData = lib.loadJson(('locales.%s'):format(defaultLocale))
+    local localeData    = lib.loadJson(('locales.%s'):format(defaultLocale))
 
-    -- Envia tudo num unico evento: tasks + locale + profile + mugshot
+    -- Abre o menu imediatamente com o nome/XP/level (sem foto por enquanto)
     client.SendReactMessage('ui:openMenu', {
         setLocale = localeData and localeData.ui or {},
         setTasks  = Config.Tasks,
@@ -362,24 +400,26 @@ local function openMenu()
             nextLevelExp  = nextLvlExp,
             level         = level,
             photo         = profile.photo,
-            mugshot       = mugshotTxd,
+            mugshot       = client.currentMugshot or '',
         },
     })
 
-    -- Tambem envia o mugshot separado para o avatar principal com retry
-    if mugshotTxd and mugshotTxd ~= '' then
-        -- Pequeno delay para garantir que a NUI ja processou o openMenu
-        Citizen.CreateThread(function()
-            Citizen.Wait(200)
-            client.SendReactMessage('ui:setPlayerMugshot', mugshotTxd)
-            -- Sync mugshot com outros membros do lobby
-            if client.inLobby and client.lobby and client.lobby.id then
-                TriggerServerEvent(_e('server:syncMugshot'), mugshotTxd)
+    SetNuiFocus(true, true)
+
+    -- Tira screenshot em background e envia quando estiver pronta
+    -- Usa a funcao local (dataURL base64) que nao depende de servico externo
+    Citizen.CreateThread(function()
+        takePlayerScreenshotLocal(function(dataUrl)
+            if dataUrl and dataUrl ~= '' then
+                client.currentMugshot = dataUrl
+                client.SendReactMessage('ui:setPlayerMugshot', dataUrl)
+                -- Sync com outros membros do lobby
+                if client.inLobby and client.lobby and client.lobby.id then
+                    TriggerServerEvent(_e('server:syncMugshot'), dataUrl)
+                end
             end
         end)
-    end
-
-    SetNuiFocus(true, true)
+    end)
 end
 
 --- Toggles the player's job duty status and handles related actions.
@@ -551,7 +591,6 @@ end
 RegisterNUICallback('nui:hideFrame', function(_, cb)
     client.SendReactMessage('ui:setVisible', false)
     SetNuiFocus(false, false)
-    releaseHeadshotHandle()
     cb({})
 end)
 

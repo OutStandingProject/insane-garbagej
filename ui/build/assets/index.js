@@ -1,4 +1,4 @@
-/* insane-garbagej UI v3 - tasks fix + mugshot nativo GTA V */
+/* insane-garbagej UI v4 - screenshot-basic dataURL */
 const resourceName = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'nui-resource';
 const body = document.body;
 const state = { visible: false, tasks: [], userProfile: {}, locale: {}, lobby: [], ranks: [] };
@@ -20,17 +20,10 @@ function normalizePayload(raw){
   return { event, payload };
 }
 
-/* === Window State === */
+/* === Window === */
 const win = document.getElementById('appWindow');
-
-function closeWindow() {
-  win.classList.add('win-hidden');
-  post('nui:hideFrame', true);
-}
-
-function openWindow() {
-  win.classList.remove('win-hidden');
-}
+function closeWindow() { win.classList.add('win-hidden'); post('nui:hideFrame', true); }
+function openWindow()  { win.classList.remove('win-hidden'); }
 
 const btnRed = document.getElementById('btnRed');
 if (btnRed) btnRed.addEventListener('click', e => { e.stopPropagation(); closeWindow(); });
@@ -43,8 +36,7 @@ if (btnRed) btnRed.addEventListener('click', e => { e.stopPropagation(); closeWi
     const d = new Date();
     el.textContent = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
   }
-  tick();
-  setInterval(tick, 10000);
+  tick(); setInterval(tick, 10000);
 })();
 
 /* === Visibility === */
@@ -54,7 +46,7 @@ function setVisible(show) {
   if (state.visible) openWindow();
 }
 
-/* === Profile & Tasks === */
+/* === Profile helpers === */
 function profilePercent(extra) {
   const exp  = Number(state.userProfile.exp || 0);
   const next = Number(state.userProfile.nextLevelExp || 0);
@@ -66,40 +58,16 @@ function resolvePlayerName(p) {
   return p.characterName || p.name || 'Sanitation Worker';
 }
 
-/* Resolve mugshot para CSS.
-   txdString do GTA V nativo → img://txdString
-   URL http(s) → url('https://...') */
-function resolveAvatarCSS(p) {
-  const mugshot = p.mugshot || p.photo || null;
-  if (!mugshot || typeof mugshot !== 'string' || mugshot.length === 0) return '';
-  if (mugshot.startsWith('http')) return `url('${mugshot}')`;
-  return `url('img://${mugshot}')`;
-}
-
-function applyAvatarToElement(el, p) {
+/* Aplica a imagem (dataURL base64 ou https://) ao elemento.
+   Aceita qualquer string que comece com data: ou http — sem img:// */
+function applyAvatar(el, src) {
   if (!el) return;
-  const css = resolveAvatarCSS(p);
-  if (css) {
-    el.style.backgroundImage = css;
+  if (src && typeof src === 'string' && src.length > 0) {
+    el.style.backgroundImage = `url('${src}')`;
     el.style.backgroundSize = 'cover';
     el.style.backgroundPosition = 'center top';
   } else {
     el.style.backgroundImage = '';
-  }
-}
-
-/* Tenta re-aplicar o mugshot com pequeno delay para garantir
-   que o txd do GTA V já está pronto na NUI */
-function applyMugshotWithRetry(el, p, attempts) {
-  if (!el) return;
-  const tries = attempts || 0;
-  const css = resolveAvatarCSS(p);
-  if (css) {
-    el.style.backgroundImage = css;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center top';
-  } else if (tries < 10) {
-    setTimeout(() => applyMugshotWithRetry(el, p, tries + 1), 300);
   }
 }
 
@@ -122,12 +90,15 @@ function renderProfile() {
   const lbL = $('lobbyLabel'); if (lbL) lbL.textContent = ui('lobby', 'Lobby');
   const rkL = $('rankLabel');  if (rkL) rkL.textContent = ui('top_reputation', 'Top Reputation');
 
+  /* Avatar principal — aceita dataURL ou https:// */
   const avatarEl = document.querySelector('.avatar');
-  applyMugshotWithRetry(avatarEl, p, 0);
+  const imgSrc = p.mugshot || p.photo || null;
+  applyAvatar(avatarEl, imgSrc);
+
   injectSelfIntoLobby();
 }
 
-/* Injeta o proprio jogador no primeiro slot do lobby */
+/* Injeta o proprio jogador no slot 0 do lobby */
 function injectSelfIntoLobby() {
   const p = state.userProfile || {};
   if (!p.source) return;
@@ -181,9 +152,7 @@ function renderTasks() {
   });
 }
 
-/* === LOBBY ===
-   Slot 0 = sempre o proprio jogador.
-   Restantes slots = outros membros recebidos do servidor. */
+/* === LOBBY — slot 0 sempre o proprio jogador === */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
@@ -196,18 +165,25 @@ function renderLobby(members) {
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
     if (m) {
       const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
+      const avatarDiv = document.createElement('div');
+      avatarDiv.className = 'slot-avatar';
+      /* aceita dataURL (data:image/png;base64,...) ou https:// */
       const imgSrc = m.mugshot || m.photo || null;
-      let bgStyle = '';
       if (imgSrc) {
-        const cssUrl = (typeof imgSrc === 'string' && !imgSrc.startsWith('http'))
-          ? `img://${imgSrc}`
-          : imgSrc;
-        bgStyle = `style="background-image:url('${cssUrl}');background-size:cover;background-position:center top;"`;
+        avatarDiv.style.backgroundImage = `url('${imgSrc}')`;
+        avatarDiv.style.backgroundSize = 'cover';
+        avatarDiv.style.backgroundPosition = 'center top';
       }
-      const displayName = m.characterName || m.name || '';
-      slot.innerHTML = `${crown}<div class="slot-avatar" ${bgStyle}></div><div class="slot-name">${displayName}</div>`;
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'slot-name';
+      nameDiv.textContent = m.characterName || m.name || '';
+      slot.innerHTML = crown;
+      slot.appendChild(avatarDiv);
+      slot.appendChild(nameDiv);
     } else {
-      slot.innerHTML = '<div class="slot-avatar"></div>';
+      const avatarDiv = document.createElement('div');
+      avatarDiv.className = 'slot-avatar';
+      slot.appendChild(avatarDiv);
     }
     slots.appendChild(slot);
   }
@@ -215,7 +191,6 @@ function renderLobby(members) {
 
 /* === TOP 3 RANKS === */
 const RANK_MEDALS = ['&#x1F947;','&#x1F948;','&#x1F949;'];
-
 function renderRanks(ranks) {
   const list = document.getElementById('rankList');
   if (!list) return;
@@ -236,7 +211,7 @@ window.addEventListener('message', (ev) => {
   const raw = ev.data || {};
   const { event, payload } = normalizePayload(raw);
 
-  /* Formato legado: { setLocale, setTasks } direto no raw */
+  /* Formato legado */
   if (raw.setLocale || raw.setTasks) {
     if (raw.setLocale) state.locale = raw.setLocale.ui || raw.setLocale;
     if (raw.setTasks)  state.tasks  = raw.setTasks;
@@ -253,7 +228,6 @@ window.addEventListener('message', (ev) => {
       post('nui:onLoadUI', true);
       return;
 
-    /* openMenu envia este evento com tasks + profile + mugshot tudo junto */
     case 'ui:openMenu': {
       if (payload.setLocale) state.locale = payload.setLocale.ui || payload.setLocale;
       if (payload.setTasks)  state.tasks  = payload.setTasks;
@@ -284,14 +258,17 @@ window.addEventListener('message', (ev) => {
       renderProfile();
       return;
 
-    case 'ui:setPlayerMugshot':
-      if (typeof payload === 'string' && payload.length > 0) {
-        state.userProfile.mugshot = payload;
+    /* Recebe dataURL (data:image/png;base64,...) ou https:// do screenshot-basic */
+    case 'ui:setPlayerMugshot': {
+      const url = typeof payload === 'string' ? payload : '';
+      if (url.length > 0) {
+        state.userProfile.mugshot = url;
         const avatarEl = document.querySelector('.avatar');
-        applyMugshotWithRetry(avatarEl, state.userProfile, 0);
+        applyAvatar(avatarEl, url);
         injectSelfIntoLobby();
       }
       return;
+    }
 
     case 'ui:setTasks':
       state.tasks = Array.isArray(payload) ? payload : Object.values(payload || {});
