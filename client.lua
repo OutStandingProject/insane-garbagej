@@ -6,10 +6,10 @@ client = {
     onDuty = false,
     workingPoint = nil,
     inLobby = false,
-    currentMugshot = nil, -- txd string do mugshot nativo GTA V
+    currentMugshot = nil,
     lobby = {
         id = nil,
-        members = {}, --[[@type table<key, {source:number, photo: number, characterName: string, mugshot: string}>]]
+        members = {},
         leaderId = nil,
         isTaskStarted = false,
         isTaskFinished = false,
@@ -47,7 +47,6 @@ local lastDumpster = {
     blip = nil, coords = nil, clean = 0, attached = false, entity = nil,
 }
 
--- Guarda o handle do headshot de forma persistente
 local _headshotHandle = nil
 
 ---Sends message to the ReactUI.
@@ -58,34 +57,26 @@ function client.SendReactMessage(action, data)
 end
 
 --- Gera o headshot (mugshot) nativo do GTA V para o ped local.
---- Usa Citizen.InvokeNative para garantir compatibilidade com FiveM.
---- Retorna o txd string que pode ser usado com img:// na NUI.
 ---@return string
 local function generatePlayerHeadshot()
     local ped = cache.ped
     if not ped or not DoesEntityExist(ped) then return "" end
 
-    -- Liberta handle anterior se existir
     if _headshotHandle and _headshotHandle ~= 0 then
-        -- 0xD4F7B05C = UnregisterPedHeadshot
         Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
         _headshotHandle = nil
     end
 
-    -- 0x4462658788425018 = RegisterPedHeadshot
     local handle = Citizen.InvokeNative(0x4462658788425018, ped)
     if not handle or handle == 0 then return "" end
 
     local timeout = 0
-    -- 0x1F3F7683 = IsPedHeadshotReady
     while not Citizen.InvokeNative(0x1F3F7683, handle) and timeout < 100 do
         Citizen.Wait(50)
         timeout = timeout + 1
     end
 
-    -- 0x1F3F7683 = IsPedHeadshotReady
     if Citizen.InvokeNative(0x1F3F7683, handle) then
-        -- 0x endorsing = GetPedHeadshotTxdString
         local txd = Citizen.InvokeNative(0xDB4CAEDBCE1C2728, handle, Citizen.ResultAsString())
         if txd and txd ~= "" then
             _headshotHandle = handle
@@ -337,7 +328,6 @@ local function openMenu()
         client.workingPoint = client.onDuty and 1
     end
 
-    -- Busca o perfil do jogador no servidor
     local profile = lib.callback.await(_e('server:getPlayerProfile'), false)
     if not profile then return end
 
@@ -346,11 +336,9 @@ local function openMenu()
     local level       = getUserLevel(exp)
     local playerSrc   = GetPlayerServerId(PlayerId())
 
-    -- Gera o mugshot nativo do GTA V (mantém handle vivo)
     local mugshotTxd = generatePlayerHeadshot()
     client.currentMugshot = mugshotTxd
 
-    -- Envia o perfil completo com mugshot para a NUI
     client.SendReactMessage('ui:setUserProfile', {
         source        = playerSrc,
         characterName = profile.characterName,
@@ -361,10 +349,8 @@ local function openMenu()
         mugshot       = mugshotTxd,
     })
 
-    -- Envia mugshot separadamente para garantir que o slot 0 fica atualizado
     if mugshotTxd and mugshotTxd ~= '' then
         client.SendReactMessage('ui:setPlayerMugshot', mugshotTxd)
-        -- Sincroniza com o servidor para distribuir pelo lobby (se estiver num)
         if client.inLobby and client.lobby and client.lobby.id then
             TriggerServerEvent(_e('server:syncMugshot'), mugshotTxd)
         end
@@ -395,10 +381,8 @@ RegisterNUICallback('nui:startLobbyWithTask', function(taskId, cb)
     if client.inLobby then
         Lobby.StartTask(taskId)
     else
-        -- Cria lobby automaticamente se nao estiver em nenhum
         local profile = lib.callback.await(_e('server:getPlayerProfile'), false)
         if profile then
-            -- Inicia o lobby como solo e começa a tarefa
             local lobbyResp = lib.callback.await(_e('server:StartLobbyTask'), false, nil, taskId, client.workingPoint)
             if lobbyResp and lobbyResp.error then
                 Utils.Notify(lobbyResp.error, 'error')
@@ -426,13 +410,15 @@ AddEventHandler('onClientResourceStart', function(resourceName)
 end)
 
 -- Target interaction to open menu
+-- O tablet esta em Config.JobOptions.startPoints[1].interaction.tablet
+local tabletCfg = Config.JobOptions.startPoints[1].interaction.tablet
 Target.AddBoxZone(
-    Config.JobOptions.tablet.coords,
-    Config.JobOptions.tablet.size,
-    Config.JobOptions.tablet.heading,
+    tabletCfg.coords,
+    vec3(1.2, 1.2, 1.2),
+    0.0,
     {
         name   = 'garbage_tablet',
-        label  = Config.JobOptions.tablet.label or 'Open Menu',
+        label  = tabletCfg.drawText or 'Abrir painel de trabalho',
         icon   = 'fas fa-tablet-alt',
         onEnter = nil,
         onExit  = nil,
@@ -468,7 +454,7 @@ RegisterNetEvent(_e('client:OnNewDumpsterCoordCreated'), function(dumpsterCoord,
     lastDumpster.attached = false
     lastDumpster.entity  = nil
 
-    local blipData = Config.JobOptions.dumpsterBlip
+    local blipData = Config.JobOptions.startPoints[1].interaction.tablet.blip
     if lastDumpster.blip then RemoveBlip(lastDumpster.blip) end
     lastDumpster.blip = addBlip(dumpsterCoord, blipData, true)
 
@@ -508,7 +494,6 @@ RegisterNetEvent(_e('client:TaskCompleted'), function()
     deleteBlips()
     setJobUniform(false)
     Utils.Notify(locale('task_completed'), 'success', 7000)
-    -- Atualiza ranks apos completar tarefa
     lib.callback(_e('server:GetRanks'), false, function(ranks)
         if not ranks then return end
         local rankList = {}
@@ -527,14 +512,11 @@ RegisterNetEvent(_e('client:OnTaskVehicleCreated'), function(netId)
 end)
 
 RegisterNetEvent(_e('client:SpawnLastStepBags'), function()
-    -- spawn bags logic handled by task module
 end)
 
 RegisterNetEvent(_e('client:PlayLastStepBagConveyor'), function(src)
-    -- conveyor sync logic
 end)
 
--- Object helpers (referenced by task events above)
 function deleteCreatedObjects()
     for _, obj in pairs(taskObjects) do
         if DoesEntityExist(obj) then DeleteEntity(obj) end
