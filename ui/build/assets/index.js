@@ -1,4 +1,4 @@
-/* insane-garbagej UI v2 - mugshot nativo GTA V + lobby slots + ranks fix */
+/* insane-garbagej UI v3 - tasks fix + mugshot nativo GTA V */
 const resourceName = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'nui-resource';
 const body = document.body;
 const state = { visible: false, tasks: [], userProfile: {}, locale: {}, lobby: [], ranks: [] };
@@ -62,24 +62,18 @@ function profilePercent(extra) {
   return Math.max(0, Math.min(100, ((exp + Number(extra || 0)) / next) * 100));
 }
 
-/* Resolve o nome do jogador: o servidor envia characterName (QBCore/ESX). */
 function resolvePlayerName(p) {
   return p.characterName || p.name || 'Sanitation Worker';
 }
 
-/* Resolve a imagem do mugshot para background-image CSS.
-   O GTA V gera um txd string via GetPedHeadshotTxdString.
-   Na NUI do FiveM esse txd e acessivel com o protocolo img://. */
+/* Resolve mugshot para CSS.
+   txdString do GTA V nativo → img://txdString
+   URL http(s) → url('https://...') */
 function resolveAvatarCSS(p) {
   const mugshot = p.mugshot || p.photo || null;
-  if (!mugshot) return '';
-  if (typeof mugshot === 'string' && mugshot.length > 0 && !mugshot.startsWith('http')) {
-    return `url('img://${mugshot}')`;
-  }
-  if (typeof mugshot === 'string' && mugshot.startsWith('http')) {
-    return `url('${mugshot}')`;
-  }
-  return '';
+  if (!mugshot || typeof mugshot !== 'string' || mugshot.length === 0) return '';
+  if (mugshot.startsWith('http')) return `url('${mugshot}')`;
+  return `url('img://${mugshot}')`;
 }
 
 function applyAvatarToElement(el, p) {
@@ -89,6 +83,23 @@ function applyAvatarToElement(el, p) {
     el.style.backgroundImage = css;
     el.style.backgroundSize = 'cover';
     el.style.backgroundPosition = 'center top';
+  } else {
+    el.style.backgroundImage = '';
+  }
+}
+
+/* Tenta re-aplicar o mugshot com pequeno delay para garantir
+   que o txd do GTA V já está pronto na NUI */
+function applyMugshotWithRetry(el, p, attempts) {
+  if (!el) return;
+  const tries = attempts || 0;
+  const css = resolveAvatarCSS(p);
+  if (css) {
+    el.style.backgroundImage = css;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center top';
+  } else if (tries < 10) {
+    setTimeout(() => applyMugshotWithRetry(el, p, tries + 1), 300);
   }
 }
 
@@ -111,7 +122,8 @@ function renderProfile() {
   const lbL = $('lobbyLabel'); if (lbL) lbL.textContent = ui('lobby', 'Lobby');
   const rkL = $('rankLabel');  if (rkL) rkL.textContent = ui('top_reputation', 'Top Reputation');
 
-  applyAvatarToElement(document.querySelector('.avatar'), p);
+  const avatarEl = document.querySelector('.avatar');
+  applyMugshotWithRetry(avatarEl, p, 0);
   injectSelfIntoLobby();
 }
 
@@ -148,7 +160,12 @@ function renderTasks() {
   const rows = document.getElementById('rows');
   if (!rows) return;
   rows.innerHTML = '';
-  normalizeTasks(state.tasks).forEach(task => {
+  const tasks = normalizeTasks(state.tasks);
+  if (tasks.length === 0) {
+    rows.innerHTML = '<div style="padding:24px;color:#666;text-align:center;">Sem tarefas disponíveis</div>';
+    return;
+  }
+  tasks.forEach(task => {
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = `
@@ -219,9 +236,10 @@ window.addEventListener('message', (ev) => {
   const raw = ev.data || {};
   const { event, payload } = normalizePayload(raw);
 
+  /* Formato legado: { setLocale, setTasks } direto no raw */
   if (raw.setLocale || raw.setTasks) {
-    state.locale = (raw.setLocale && (raw.setLocale.ui || raw.setLocale)) || state.locale;
-    state.tasks  = raw.setTasks || state.tasks;
+    if (raw.setLocale) state.locale = raw.setLocale.ui || raw.setLocale;
+    if (raw.setTasks)  state.tasks  = raw.setTasks;
     renderProfile(); renderTasks();
     post('nui:onLoadUI', true);
     return;
@@ -229,16 +247,29 @@ window.addEventListener('message', (ev) => {
 
   switch (event) {
     case 'ui:setupUI':
-      state.locale = (payload.setLocale && (payload.setLocale.ui || payload.setLocale)) || state.locale;
-      state.tasks  = payload.setTasks || state.tasks;
+      if (payload.setLocale) state.locale = payload.setLocale.ui || payload.setLocale;
+      if (payload.setTasks)  state.tasks  = payload.setTasks;
       renderProfile(); renderTasks();
       post('nui:onLoadUI', true);
       return;
+
+    /* openMenu envia este evento com tasks + profile + mugshot tudo junto */
+    case 'ui:openMenu': {
+      if (payload.setLocale) state.locale = payload.setLocale.ui || payload.setLocale;
+      if (payload.setTasks)  state.tasks  = payload.setTasks;
+      if (payload.profile)   state.userProfile = payload.profile;
+      renderProfile();
+      renderTasks();
+      setVisible(true);
+      return;
+    }
+
     case 'ui:setVisible':
       if (typeof payload === 'boolean')       setVisible(payload);
       else if (typeof raw.show === 'boolean') setVisible(raw.show);
       else if (typeof payload === 'string')   setVisible(payload === 'true' || payload === '1');
       return;
+
     case 'ui:setPage':
       if (typeof payload === 'string')
         setVisible(payload === 'garbage' || payload === 'delivery' || payload === 'towtruck');
@@ -247,24 +278,30 @@ window.addEventListener('message', (ev) => {
       else if (typeof raw.show === 'boolean')
         setVisible(raw.show);
       return;
+
     case 'ui:setUserProfile':
       state.userProfile = payload;
       renderProfile();
       return;
+
     case 'ui:setPlayerMugshot':
-      if (typeof payload === 'string' && payload) {
+      if (typeof payload === 'string' && payload.length > 0) {
         state.userProfile.mugshot = payload;
-        applyAvatarToElement(document.querySelector('.avatar'), state.userProfile);
+        const avatarEl = document.querySelector('.avatar');
+        applyMugshotWithRetry(avatarEl, state.userProfile, 0);
         injectSelfIntoLobby();
       }
       return;
+
     case 'ui:setTasks':
-      state.tasks = payload;
+      state.tasks = Array.isArray(payload) ? payload : Object.values(payload || {});
       renderTasks();
       return;
+
     case 'ui:setDebug':
       setVisible(true);
       return;
+
     case 'ui:setCurrentLobby':
     case 'ui:setLobbyMembers': {
       const incoming = Array.isArray(payload) ? payload : (payload.members || []);
@@ -273,10 +310,12 @@ window.addEventListener('message', (ev) => {
       renderLobby(state.lobby);
       return;
     }
+
     case 'ui:setRanks':
       state.ranks = Array.isArray(payload) ? payload : (payload.ranks || []);
       renderRanks(state.ranks);
       return;
+
     case 'ui:setTaskInfo':
     case 'ui:setTaskProgress':
     case 'ui:setProfilePhoto':
