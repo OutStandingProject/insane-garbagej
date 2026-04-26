@@ -72,6 +72,22 @@ function Lobby.UpdateMemberPhoto(lobbyId, source, newPhoto)
     return false
 end
 
+-- Atualiza o mugshot (txd string nativo do GTA V) de um membro no lobby
+-- e propaga a todos os outros membros via client:updateLobbyMembers.
+function Lobby.UpdateMemberMugshot(lobbyId, source, mugshotTxd)
+    local lobby = Lobby.GetLobbyById(lobbyId)
+    if not lobby then return false end
+
+    for _, member in pairs(lobby.members) do
+        if member.source == source then
+            member.mugshot = mugshotTxd
+            Lobby.UpdateMembers(lobby)
+            return true
+        end
+    end
+    return false
+end
+
 function Lobby.LeaveById(lobbyId, source)
     local lobby = Lobby.GetLobbyById(lobbyId)
     if not lobby then return false end
@@ -97,10 +113,16 @@ end
 
 function Lobby.Create(leader)
     lastLobbyIndx = lastLobbyIndx + 1
+    local characterName = server.GetPlayerCharacterName(leader)
     Lobbies[lastLobbyIndx] = {
         id = lastLobbyIndx,
         members = {
-            [1] = { source = leader, photo = server.GetProfilePhoto(leader), }
+            [1] = {
+                source        = leader,
+                photo         = server.GetProfilePhoto(leader),
+                characterName = characterName,
+                mugshot       = nil,
+            }
         },
         leaderId = leader,
         isTaskStarted = false,
@@ -147,10 +169,13 @@ function Lobby.Join(lobbyId, source)
     if not Lobby.IsPlayerFree(source) then
         return { error = locale('already_in_lobby') }
     end
+    local characterName = server.GetPlayerCharacterName(source)
     lobby.members[#lobby.members + 1] = {
-        source = source,
-        photo = server.GetProfilePhoto(source),
-        deduction = 0,
+        source        = source,
+        photo         = server.GetProfilePhoto(source),
+        characterName = characterName,
+        mugshot       = nil,
+        deduction     = 0,
     }
     TriggerClientEvent(_e('client:setPlayerLobby'), source, lobby)
     Lobby.UpdateMembers(lobby, source)
@@ -257,6 +282,19 @@ lib.callback.register(_e('server:StartLobbyTask'), function(source, lobbyId, tas
         })
     end
     return {}
+end)
+
+-- Evento: cliente envia o seu mugshot (txd nativo) para o servidor
+-- que o guarda no lobby e distribui a todos os membros.
+RegisterNetEvent(_e('server:syncMugshot'), function(mugshotTxd)
+    local src = source
+    -- Procura o lobby do jogador
+    for _, lobby in pairs(Lobbies) do
+        if Lobby.IsPlayerInLobby(lobby.id, src) then
+            Lobby.UpdateMemberMugshot(lobby.id, src, mugshotTxd)
+            return
+        end
+    end
 end)
 
 RegisterNetEvent(_e('server:OnTaskVehicleCreated'), function(lobbyId, netId)

@@ -50,6 +50,8 @@ function Lobby.AcceptLastInvite()
         return Utils.Notify(response.error, 'error')
     end
     Utils.Notify(locale('joined_lobby'), 'success')
+    -- Apos entrar no lobby, sincroniza o mugshot do jogador com o servidor
+    Lobby.SyncMugshot()
 end
 
 function Lobby.StartTask(taskId)
@@ -61,8 +63,22 @@ function Lobby.StartTask(taskId)
     return true
 end
 
+-- Envia o mugshot atual do jogador ao servidor para distribuir pelo lobby
+function Lobby.SyncMugshot()
+    local mugshot = client.currentMugshot
+    if mugshot and mugshot ~= '' then
+        TriggerServerEvent(_e('server:syncMugshot'), mugshot)
+    end
+end
+
 RegisterNetEvent(_e('client:updateLobbyMembers'), function(newMembers)
     Lobby.UpdateMembers(newMembers)
+end)
+
+RegisterNetEvent(_e('client:setPlayerLobby'), function(newLobbyData)
+    Lobby.UpdateData(newLobbyData)
+    -- Quando entra num lobby existente, sincroniza o mugshot automaticamente
+    Lobby.SyncMugshot()
 end)
 
 RegisterNetEvent(_e('client:receiveLobbyInvite'), function(lobbyId, leaderName)
