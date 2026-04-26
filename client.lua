@@ -57,31 +57,39 @@ function client.SendReactMessage(action, data)
 end
 
 --- Gera o headshot (mugshot) nativo do GTA V para o ped local.
+--- Aguarda ate 5 segundos que o txd fique pronto.
 ---@return string
 local function generatePlayerHeadshot()
     local ped = cache.ped
     if not ped or not DoesEntityExist(ped) then return "" end
 
+    -- Liberta handle anterior
     if _headshotHandle and _headshotHandle ~= 0 then
         Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
         _headshotHandle = nil
     end
 
+    -- RegisterPedHeadshot
     local handle = Citizen.InvokeNative(0x4462658788425018, ped)
     if not handle or handle == 0 then return "" end
 
+    -- Espera que fique pronto (IsPedHeadshotReady)
     local timeout = 0
     while not Citizen.InvokeNative(0x1F3F7683, handle) and timeout < 100 do
         Citizen.Wait(50)
         timeout = timeout + 1
     end
 
-    if Citizen.InvokeNative(0x1F3F7683, handle) then
-        local txd = Citizen.InvokeNative(0xDB4CAEDBCE1C2728, handle, Citizen.ResultAsString())
-        if txd and txd ~= "" then
-            _headshotHandle = handle
-            return txd
-        end
+    if not Citizen.InvokeNative(0x1F3F7683, handle) then
+        Citizen.InvokeNative(0xD4F7B05C, handle)
+        return ""
+    end
+
+    -- GetPedHeadshotTxdString
+    local txd = Citizen.InvokeNative(0xDB4CAEDBCE1C2728, handle, Citizen.ResultAsString())
+    if txd and txd ~= "" then
+        _headshotHandle = handle  -- Guarda para nao ser libertado
+        return txd
     end
 
     Citizen.InvokeNative(0xD4F7B05C, handle)
@@ -331,32 +339,46 @@ local function openMenu()
     local profile = lib.callback.await(_e('server:getPlayerProfile'), false)
     if not profile then return end
 
-    local exp         = tonumber(profile.exp) or 0
-    local nextLvlExp  = getNextLevelExp(exp)
-    local level       = getUserLevel(exp)
-    local playerSrc   = GetPlayerServerId(PlayerId())
+    local exp        = tonumber(profile.exp) or 0
+    local nextLvlExp = getNextLevelExp(exp)
+    local level      = getUserLevel(exp)
+    local playerSrc  = GetPlayerServerId(PlayerId())
 
+    -- Gera o mugshot ANTES de abrir o menu
     local mugshotTxd = generatePlayerHeadshot()
     client.currentMugshot = mugshotTxd
 
-    client.SendReactMessage('ui:setUserProfile', {
-        source        = playerSrc,
-        characterName = profile.characterName,
-        exp           = exp,
-        nextLevelExp  = nextLvlExp,
-        level         = level,
-        photo         = profile.photo,
-        mugshot       = mugshotTxd,
+    local defaultLocale = GetConvar('ox:locale', 'en')
+    local localeData = lib.loadJson(('locales.%s'):format(defaultLocale))
+
+    -- Envia tudo num unico evento: tasks + locale + profile + mugshot
+    client.SendReactMessage('ui:openMenu', {
+        setLocale = localeData and localeData.ui or {},
+        setTasks  = Config.Tasks,
+        profile   = {
+            source        = playerSrc,
+            characterName = profile.characterName,
+            exp           = exp,
+            nextLevelExp  = nextLvlExp,
+            level         = level,
+            photo         = profile.photo,
+            mugshot       = mugshotTxd,
+        },
     })
 
+    -- Tambem envia o mugshot separado para o avatar principal com retry
     if mugshotTxd and mugshotTxd ~= '' then
-        client.SendReactMessage('ui:setPlayerMugshot', mugshotTxd)
-        if client.inLobby and client.lobby and client.lobby.id then
-            TriggerServerEvent(_e('server:syncMugshot'), mugshotTxd)
-        end
+        -- Pequeno delay para garantir que a NUI ja processou o openMenu
+        Citizen.CreateThread(function()
+            Citizen.Wait(200)
+            client.SendReactMessage('ui:setPlayerMugshot', mugshotTxd)
+            -- Sync mugshot com outros membros do lobby
+            if client.inLobby and client.lobby and client.lobby.id then
+                TriggerServerEvent(_e('server:syncMugshot'), mugshotTxd)
+            end
+        end)
     end
 
-    client.SendReactMessage('ui:setVisible', true)
     SetNuiFocus(true, true)
 end
 
@@ -480,7 +502,7 @@ local function startInteractionMarkers()
                         end
                     end
 
-                    -- Tablet zone (só quando on duty neste ponto)
+                    -- Tablet zone (so quando on duty neste ponto)
                     if tablet then
                         local canUseTablet = client.onDuty and client.workingPoint == index
                         if canUseTablet then
@@ -637,9 +659,10 @@ RegisterNetEvent(_e('client:openMenu'), openMenu)
 function client.SetupUI()
     if client.uiLoad then return end
     local defaultLocale = GetConvar('ox:locale', 'en')
+    local localeData = lib.loadJson(('locales.%s'):format(defaultLocale))
     client.SendReactMessage('ui:setupUI', {
-        setLocale = lib.loadJson(('locales.%s'):format(defaultLocale)).ui,
-        setTasks = Config.Tasks,
+        setLocale = localeData and localeData.ui or {},
+        setTasks  = Config.Tasks,
     })
 end
 
