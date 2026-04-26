@@ -75,12 +75,12 @@
                       <!-- LOBBY -->
                       <div class="lobby-section">
                         <div class="section-title" id="lobbyLabel">Lobby</div>
-                        <div class="lobby-slots" id="lobbySlots">
-                          <div class="lobby-slot empty"><div class="slot-avatar"></div></div>
-                          <div class="lobby-slot empty"><div class="slot-avatar"></div></div>
-                          <div class="lobby-slot empty"><div class="slot-avatar"></div></div>
-                          <div class="lobby-slot empty"><div class="slot-avatar"></div></div>
-                        </div>
+                        <div class="lobby-slots" id="lobbySlots"></div>
+                        <!-- Botao sair da lobby: so aparece quando ha mais de 1 membro -->
+                        <button id="lobbyLeaveBtn" aria-label="Sair da Lobby">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                          Sair da Lobby
+                        </button>
                       </div>
 
                       <div class="divider"></div>
@@ -88,23 +88,7 @@
                       <!-- TOP 3 RANK -->
                       <div class="rank-section">
                         <div class="section-title" id="rankLabel">Top Reputation</div>
-                        <div class="rank-list" id="rankList">
-                          <div class="rank-item rank-1">
-                            <span class="rank-pos">🥇</span>
-                            <span class="rank-name">—</span>
-                            <span class="rank-xp">0 XP</span>
-                          </div>
-                          <div class="rank-item rank-2">
-                            <span class="rank-pos">🥈</span>
-                            <span class="rank-name">—</span>
-                            <span class="rank-xp">0 XP</span>
-                          </div>
-                          <div class="rank-item rank-3">
-                            <span class="rank-pos">🥉</span>
-                            <span class="rank-name">—</span>
-                            <span class="rank-xp">0 XP</span>
-                          </div>
-                        </div>
+                        <div class="rank-list" id="rankList"></div>
                       </div>
 
                     </div>
