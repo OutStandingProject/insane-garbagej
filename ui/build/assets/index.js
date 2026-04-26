@@ -1,3 +1,4 @@
+/* insane-garbagej UI v2 - mugshot nativo GTA V + lobby slots + ranks fix */
 const resourceName = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'nui-resource';
 const body = document.body;
 const state = { visible: false, tasks: [], userProfile: {}, locale: {}, lobby: [], ranks: [] };
@@ -61,24 +62,20 @@ function profilePercent(extra) {
   return Math.max(0, Math.min(100, ((exp + Number(extra || 0)) / next) * 100));
 }
 
-/* Resolve o nome do jogador: o servidor envia characterName (QBCore/ESX).
-   Fallback para name caso outro framework envie campo diferente. */
+/* Resolve o nome do jogador: o servidor envia characterName (QBCore/ESX). */
 function resolvePlayerName(p) {
   return p.characterName || p.name || 'Sanitation Worker';
 }
 
 /* Resolve a imagem do mugshot para background-image CSS.
-   O GTA V gera um txd string via GetPedHeadshotTxdString (ex: "ped_headshot_0").
-   Na NUI do FiveM esse txd é acessível directamente como nome de imagem CSS. */
+   O GTA V gera um txd string via GetPedHeadshotTxdString.
+   Na NUI do FiveM esse txd e acessivel com o protocolo img://. */
 function resolveAvatarCSS(p) {
   const mugshot = p.mugshot || p.photo || null;
   if (!mugshot) return '';
-  // Se for um txd nativo do GTA (sem protocolo), usa directamente
-  // O Chromium embebido no FiveM resolve txd strings como imagens
   if (typeof mugshot === 'string' && mugshot.length > 0 && !mugshot.startsWith('http')) {
     return `url('img://${mugshot}')`;
   }
-  // Se já for uma URL completa
   if (typeof mugshot === 'string' && mugshot.startsWith('http')) {
     return `url('${mugshot}')`;
   }
@@ -88,41 +85,40 @@ function resolveAvatarCSS(p) {
 function applyAvatarToElement(el, p) {
   if (!el) return;
   const css = resolveAvatarCSS(p);
-  el.style.backgroundImage = css;
+  if (css) {
+    el.style.backgroundImage = css;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center top';
+  }
 }
 
 function renderProfile() {
   const p = state.userProfile || {};
-  const el = id => document.getElementById(id);
+  const $ = id => document.getElementById(id);
 
-  el('workerName').textContent   = resolvePlayerName(p);
-  el('workerJob').textContent    = p.jobLabel || p.job || 'Sanitation Worker';
-  el('repLabel').textContent     = ui('reputation', 'Reputation');
-  el('repText').textContent      = `${Number(p.exp || 0).toLocaleString()} / ${Number(p.nextLevelExp || 0).toLocaleString()} XP`;
-  el('repFill').style.width      = `${profilePercent()}%`;
-  el('levelPill').textContent    = `Level ${Number(p.level || 1)}`;
-  el('mapsLabel').textContent    = ui('maps', 'Maps');
-  el('titleLabel').textContent   = ui('title', 'Title');
-  el('levelLabel').textContent   = ui('level', 'Level');
-  el('rewardsLabel').textContent = ui('rewards', 'Rewards');
-  el('repColLabel').textContent  = ui('rep', 'Rep');
-  el('gpsLabel').textContent     = ui('gps', 'GPS');
-  el('lobbyLabel').textContent   = ui('lobby', 'Lobby');
-  el('rankLabel').textContent    = ui('top_reputation', 'Top Reputation');
+  const nameEl = $('workerName'); if (nameEl) nameEl.textContent = resolvePlayerName(p);
+  const jobEl  = $('workerJob');  if (jobEl)  jobEl.textContent  = p.jobLabel || p.job || 'Sanitation Worker';
+  const repLbl = $('repLabel');   if (repLbl) repLbl.textContent = ui('reputation', 'Reputation');
+  const repTxt = $('repText');    if (repTxt) repTxt.textContent = `${Number(p.exp || 0).toLocaleString()} / ${Number(p.nextLevelExp || 0).toLocaleString()} XP`;
+  const repFil = $('repFill');    if (repFil) repFil.style.width = `${profilePercent()}%`;
+  const lvlPil = $('levelPill'); if (lvlPil) lvlPil.textContent = `Level ${Number(p.level || 1)}`;
+  const mL = $('mapsLabel');    if (mL) mL.textContent    = ui('maps', 'Maps');
+  const tL = $('titleLabel');   if (tL) tL.textContent   = ui('title', 'Title');
+  const lL = $('levelLabel');   if (lL) lL.textContent   = ui('level', 'Level');
+  const rL = $('rewardsLabel'); if (rL) rL.textContent   = ui('rewards', 'Rewards');
+  const rC = $('repColLabel'); if (rC) rC.textContent   = ui('rep', 'Rep');
+  const gL = $('gpsLabel');    if (gL) gL.textContent   = ui('gps', 'GPS');
+  const lbL = $('lobbyLabel'); if (lbL) lbL.textContent = ui('lobby', 'Lobby');
+  const rkL = $('rankLabel');  if (rkL) rkL.textContent = ui('top_reputation', 'Top Reputation');
 
-  // Aplica o mugshot no avatar principal
   applyAvatarToElement(document.querySelector('.avatar'), p);
-
-  // Injeta o próprio jogador no slot 0 do lobby
   injectSelfIntoLobby();
 }
 
-/* Injeta o próprio jogador no primeiro slot do lobby */
+/* Injeta o proprio jogador no primeiro slot do lobby */
 function injectSelfIntoLobby() {
   const p = state.userProfile || {};
-  // Só injeta se tiver source (perfil carregado do servidor)
   if (!p.source) return;
-
   const selfMember = {
     source:        p.source,
     characterName: resolvePlayerName(p),
@@ -130,7 +126,6 @@ function injectSelfIntoLobby() {
     isLeader:      true,
     isSelf:        true
   };
-
   const currentLobby = Array.isArray(state.lobby) ? state.lobby : [];
   const withoutSelf  = currentLobby.filter(m => m && !m.isSelf);
   state.lobby = [selfMember, ...withoutSelf];
@@ -151,6 +146,7 @@ function normalizeTasks(tasks) {
 
 function renderTasks() {
   const rows = document.getElementById('rows');
+  if (!rows) return;
   rows.innerHTML = '';
   normalizeTasks(state.tasks).forEach(task => {
     const row = document.createElement('div');
@@ -169,8 +165,8 @@ function renderTasks() {
 }
 
 /* === LOBBY ===
-   Slot 0 = sempre o próprio jogador (preenchido por injectSelfIntoLobby).
-   Restantes slots = outros membros do lobby. */
+   Slot 0 = sempre o proprio jogador.
+   Restantes slots = outros membros recebidos do servidor. */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
@@ -183,21 +179,16 @@ function renderLobby(members) {
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
     if (m) {
       const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
-      // Mesmo sistema de resolução do avatar: txd nativo ou URL
       const imgSrc = m.mugshot || m.photo || null;
       let bgStyle = '';
       if (imgSrc) {
         const cssUrl = (typeof imgSrc === 'string' && !imgSrc.startsWith('http'))
           ? `img://${imgSrc}`
           : imgSrc;
-        bgStyle = `style="background-image:url('${cssUrl}');"`;
+        bgStyle = `style="background-image:url('${cssUrl}');background-size:cover;background-position:center top;"`;
       }
       const displayName = m.characterName || m.name || '';
-      slot.innerHTML = `
-        ${crown}
-        <div class="slot-avatar" ${bgStyle}></div>
-        <div class="slot-name">${displayName}</div>
-      `;
+      slot.innerHTML = `${crown}<div class="slot-avatar" ${bgStyle}></div><div class="slot-name">${displayName}</div>`;
     } else {
       slot.innerHTML = '<div class="slot-avatar"></div>';
     }
@@ -205,8 +196,7 @@ function renderLobby(members) {
   }
 }
 
-/* === TOP 3 RANKS ===
-   O servidor envia characterName — fix do "undefined" no rank */
+/* === TOP 3 RANKS === */
 const RANK_MEDALS = ['&#x1F947;','&#x1F948;','&#x1F949;'];
 
 function renderRanks(ranks) {
@@ -219,11 +209,7 @@ function renderRanks(ranks) {
     const item = document.createElement('div');
     item.className = `rank-item rank-${i+1}`;
     const rankName = r ? (r.characterName || r.name || '—') : '—';
-    item.innerHTML = `
-      <span class="rank-pos">${RANK_MEDALS[i]}</span>
-      <span class="rank-name">${rankName}</span>
-      <span class="rank-xp">${r ? Number(r.exp || 0).toLocaleString() + ' XP' : '0 XP'}</span>
-    `;
+    item.innerHTML = `<span class="rank-pos">${RANK_MEDALS[i]}</span><span class="rank-name">${rankName}</span><span class="rank-xp">${r ? Number(r.exp || 0).toLocaleString() + ' XP' : '0 XP'}</span>`;
     list.appendChild(item);
   }
 }
@@ -266,7 +252,6 @@ window.addEventListener('message', (ev) => {
       renderProfile();
       return;
     case 'ui:setPlayerMugshot':
-      // Atualiza mugshot em tempo real quando o headshot fica pronto
       if (typeof payload === 'string' && payload) {
         state.userProfile.mugshot = payload;
         applyAvatarToElement(document.querySelector('.avatar'), state.userProfile);
