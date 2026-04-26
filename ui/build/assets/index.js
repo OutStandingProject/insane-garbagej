@@ -152,7 +152,86 @@ function renderTasks() {
   });
 }
 
-/* === LOBBY — slot 0 sempre o proprio jogador === */
+/* ============================================================
+   INVITE MODAL
+   ============================================================ */
+(function setupInviteModal() {
+  /* Inject modal HTML once */
+  const modalHTML = `
+    <div id="inviteModal">
+      <div id="inviteBackdrop"></div>
+      <div id="inviteBox" role="dialog" aria-modal="true" aria-labelledby="inviteTitle">
+        <button id="inviteCloseBtn" aria-label="Fechar">&#x2715;</button>
+        <h3 id="inviteTitle">Convidar para Lobby</h3>
+        <p>Insere o ID do jogador que queres convidar.</p>
+        <div id="inviteInputRow">
+          <input id="inviteIdInput" type="number" min="1" placeholder="ID do jogador" />
+          <button id="inviteSendBtn">Convidar</button>
+        </div>
+        <div id="inviteFeedback"></div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+  const modal    = document.getElementById('inviteModal');
+  const backdrop = document.getElementById('inviteBackdrop');
+  const input    = document.getElementById('inviteIdInput');
+  const sendBtn  = document.getElementById('inviteSendBtn');
+  const closeBtn = document.getElementById('inviteCloseBtn');
+  const feedback = document.getElementById('inviteFeedback');
+
+  function openInviteModal() {
+    input.value = '';
+    feedback.textContent = '';
+    feedback.className = '';
+    modal.classList.add('open');
+    setTimeout(() => input.focus(), 80);
+  }
+
+  function closeInviteModal() {
+    modal.classList.remove('open');
+  }
+
+  function sendInvite() {
+    const id = parseInt(input.value, 10);
+    if (!id || id < 1) {
+      feedback.textContent = 'ID inválido. Introduz um número válido.';
+      feedback.className = 'error';
+      return;
+    }
+    feedback.textContent = 'A enviar convite...';
+    feedback.className = '';
+    post('nui:invitePlayer', { targetId: id })
+      .then(res => {
+        if (res && res.success === false) {
+          feedback.textContent = res.message || 'Erro ao enviar convite.';
+          feedback.className = 'error';
+        } else {
+          feedback.textContent = `Convite enviado para o jogador ${id}!`;
+          feedback.className = '';
+          setTimeout(() => closeInviteModal(), 1200);
+        }
+      })
+      .catch(() => {
+        feedback.textContent = 'Erro de ligação.';
+        feedback.className = 'error';
+      });
+  }
+
+  closeBtn.addEventListener('click', closeInviteModal);
+  backdrop.addEventListener('click', closeInviteModal);
+  sendBtn.addEventListener('click', sendInvite);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendInvite();
+    if (e.key === 'Escape') closeInviteModal();
+  });
+
+  /* Expose opener so renderLobby can attach it to + buttons */
+  window._openInviteModal = openInviteModal;
+})();
+
+/* === LOBBY — slot 0 always the player, empty slots show + button === */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
@@ -164,10 +243,10 @@ function renderLobby(members) {
     const slot = document.createElement('div');
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
     if (m) {
+      /* Filled slot */
       const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
       const avatarDiv = document.createElement('div');
       avatarDiv.className = 'slot-avatar';
-      /* aceita dataURL (data:image/png;base64,...) ou https:// */
       const imgSrc = m.mugshot || m.photo || null;
       if (imgSrc) {
         avatarDiv.style.backgroundImage = `url('${imgSrc}')`;
@@ -181,8 +260,18 @@ function renderLobby(members) {
       slot.appendChild(avatarDiv);
       slot.appendChild(nameDiv);
     } else {
+      /* Empty slot — show + button in center */
       const avatarDiv = document.createElement('div');
       avatarDiv.className = 'slot-avatar';
+      const plusBtn = document.createElement('button');
+      plusBtn.className = 'slot-invite-btn';
+      plusBtn.setAttribute('aria-label', 'Convidar jogador');
+      plusBtn.setAttribute('title', 'Convidar jogador');
+      plusBtn.textContent = '+';
+      plusBtn.addEventListener('click', () => {
+        if (typeof window._openInviteModal === 'function') window._openInviteModal();
+      });
+      avatarDiv.appendChild(plusBtn);
       slot.appendChild(avatarDiv);
     }
     slots.appendChild(slot);
