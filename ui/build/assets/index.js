@@ -64,24 +64,41 @@ function profilePercent(extra) {
 /* Resolve o nome do jogador: o servidor envia characterName (QBCore/ESX).
    Fallback para name caso outro framework envie campo diferente. */
 function resolvePlayerName(p) {
-  return p.characterName || p.name || ui('victor_goods', 'Victor Goods');
+  return p.characterName || p.name || 'Sanitation Worker';
 }
 
-/* Resolve a imagem do jogador: usa mugshot (headshot nativo GTA V) gerado no client.lua.
-   Fallback para photo caso exista. */
-function resolvePlayerPhoto(p) {
-  return p.mugshot || p.photo || null;
+/* Resolve a imagem do mugshot para background-image CSS.
+   O GTA V gera um txd string via GetPedHeadshotTxdString (ex: "ped_headshot_0").
+   Na NUI do FiveM esse txd é acessível directamente como nome de imagem CSS. */
+function resolveAvatarCSS(p) {
+  const mugshot = p.mugshot || p.photo || null;
+  if (!mugshot) return '';
+  // Se for um txd nativo do GTA (sem protocolo), usa directamente
+  // O Chromium embebido no FiveM resolve txd strings como imagens
+  if (typeof mugshot === 'string' && mugshot.length > 0 && !mugshot.startsWith('http')) {
+    return `url('img://${mugshot}')`;
+  }
+  // Se já for uma URL completa
+  if (typeof mugshot === 'string' && mugshot.startsWith('http')) {
+    return `url('${mugshot}')`;
+  }
+  return '';
+}
+
+function applyAvatarToElement(el, p) {
+  if (!el) return;
+  const css = resolveAvatarCSS(p);
+  el.style.backgroundImage = css;
 }
 
 function renderProfile() {
   const p = state.userProfile || {};
   const el = id => document.getElementById(id);
 
-  // Nome correto do personagem (characterName enviado pelo servidor)
   el('workerName').textContent   = resolvePlayerName(p);
   el('workerJob').textContent    = p.jobLabel || p.job || 'Sanitation Worker';
   el('repLabel').textContent     = ui('reputation', 'Reputation');
-  el('repText').textContent      = `${Number(p.exp || 1200).toLocaleString()} / ${Number(p.nextLevelExp || 1800).toLocaleString()} XP`;
+  el('repText').textContent      = `${Number(p.exp || 0).toLocaleString()} / ${Number(p.nextLevelExp || 0).toLocaleString()} XP`;
   el('repFill').style.width      = `${profilePercent()}%`;
   el('levelPill').textContent    = `Level ${Number(p.level || 1)}`;
   el('mapsLabel').textContent    = ui('maps', 'Maps');
@@ -93,35 +110,27 @@ function renderProfile() {
   el('lobbyLabel').textContent   = ui('lobby', 'Lobby');
   el('rankLabel').textContent    = ui('top_reputation', 'Top Reputation');
 
-  // Avatar: usa mugshot nativo do GTA V (gerado no client.lua via RegisterPedHeadshotHandle)
-  const photo = resolvePlayerPhoto(p);
-  const avatar = document.querySelector('.avatar');
-  if (avatar) {
-    if (photo) {
-      avatar.style.backgroundImage = `url('${photo}')`;
-    } else {
-      avatar.style.backgroundImage = '';
-    }
-  }
+  // Aplica o mugshot no avatar principal
+  applyAvatarToElement(document.querySelector('.avatar'), p);
 
-  // Ao carregar o perfil, preenche automaticamente o slot 0 do lobby com o próprio jogador
+  // Injeta o próprio jogador no slot 0 do lobby
   injectSelfIntoLobby();
 }
 
-/* Injeta o próprio jogador no primeiro slot do lobby se ainda não estiver lá */
+/* Injeta o próprio jogador no primeiro slot do lobby */
 function injectSelfIntoLobby() {
   const p = state.userProfile || {};
-  if (!p.source) return; // perfil ainda não carregado
+  // Só injeta se tiver source (perfil carregado do servidor)
+  if (!p.source) return;
 
   const selfMember = {
     source:        p.source,
     characterName: resolvePlayerName(p),
-    mugshot:       resolvePlayerPhoto(p),
+    mugshot:       p.mugshot || p.photo || null,
     isLeader:      true,
     isSelf:        true
   };
 
-  // Garante que o slot 0 é sempre o próprio jogador
   const currentLobby = Array.isArray(state.lobby) ? state.lobby : [];
   const withoutSelf  = currentLobby.filter(m => m && !m.isSelf);
   state.lobby = [selfMember, ...withoutSelf];
@@ -160,8 +169,8 @@ function renderTasks() {
 }
 
 /* === LOBBY ===
-   Espera array de membros: [{characterName, mugshot, isLeader, isSelf}, ...] máx 4
-   O slot 0 é sempre o próprio jogador (preenchido em injectSelfIntoLobby). */
+   Slot 0 = sempre o próprio jogador (preenchido por injectSelfIntoLobby).
+   Restantes slots = outros membros do lobby. */
 function renderLobby(members) {
   const slots = document.getElementById('lobbySlots');
   if (!slots) return;
@@ -174,10 +183,15 @@ function renderLobby(members) {
     slot.className = 'lobby-slot' + (m ? ' filled' : ' empty');
     if (m) {
       const crown = m.isLeader ? '<span class="slot-crown">&#x1F451;</span>' : '';
-      // Usa mugshot (headshot nativo GTA V); fallback para photo se existir
+      // Mesmo sistema de resolução do avatar: txd nativo ou URL
       const imgSrc = m.mugshot || m.photo || null;
-      const bgStyle = imgSrc ? `style="background-image:url('${imgSrc}')"` : '';
-      // Nome: usa characterName (QBCore/ESX); fallback para name
+      let bgStyle = '';
+      if (imgSrc) {
+        const cssUrl = (typeof imgSrc === 'string' && !imgSrc.startsWith('http'))
+          ? `img://${imgSrc}`
+          : imgSrc;
+        bgStyle = `style="background-image:url('${cssUrl}');"`;
+      }
       const displayName = m.characterName || m.name || '';
       slot.innerHTML = `
         ${crown}
@@ -192,8 +206,7 @@ function renderLobby(members) {
 }
 
 /* === TOP 3 RANKS ===
-   Espera array: [{characterName, exp}, ...] ordenado por exp desc.
-   O servidor envia characterName (QBCore/ESX) — fix do "undefined". */
+   O servidor envia characterName — fix do "undefined" no rank */
 const RANK_MEDALS = ['&#x1F947;','&#x1F948;','&#x1F949;'];
 
 function renderRanks(ranks) {
@@ -205,7 +218,6 @@ function renderRanks(ranks) {
     const r = top[i];
     const item = document.createElement('div');
     item.className = `rank-item rank-${i+1}`;
-    // Usa characterName (campo real do servidor); fallback para name
     const rankName = r ? (r.characterName || r.name || '—') : '—';
     item.innerHTML = `
       <span class="rank-pos">${RANK_MEDALS[i]}</span>
@@ -251,16 +263,13 @@ window.addEventListener('message', (ev) => {
       return;
     case 'ui:setUserProfile':
       state.userProfile = payload;
-      renderProfile(); // injectSelfIntoLobby é chamado dentro de renderProfile
+      renderProfile();
       return;
     case 'ui:setPlayerMugshot':
-      // Atualiza o mugshot em tempo real (o headshot pode demorar uns ms a ficar pronto)
+      // Atualiza mugshot em tempo real quando o headshot fica pronto
       if (typeof payload === 'string' && payload) {
         state.userProfile.mugshot = payload;
-        // Atualiza avatar principal
-        const avatar = document.querySelector('.avatar');
-        if (avatar) avatar.style.backgroundImage = `url('${payload}')`;
-        // Atualiza slot 0 do lobby (próprio jogador)
+        applyAvatarToElement(document.querySelector('.avatar'), state.userProfile);
         injectSelfIntoLobby();
       }
       return;
@@ -274,7 +283,6 @@ window.addEventListener('message', (ev) => {
     case 'ui:setCurrentLobby':
     case 'ui:setLobbyMembers': {
       const incoming = Array.isArray(payload) ? payload : (payload.members || []);
-      // Mantém o próprio jogador no slot 0 e adiciona os restantes membros
       const selfMember = (state.lobby || []).find(m => m && m.isSelf);
       state.lobby = selfMember ? [selfMember, ...incoming.filter(m => m && !m.isSelf)] : incoming;
       renderLobby(state.lobby);
