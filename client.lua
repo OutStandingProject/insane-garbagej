@@ -47,8 +47,7 @@ local lastDumpster = {
     blip = nil, coords = nil, clean = 0, attached = false, entity = nil,
 }
 
--- Guarda o handle do headshot de forma persistente para evitar garbage collection
--- enquanto a NUI ainda está a usar a textura.
+-- Guarda o handle do headshot de forma persistente
 local _headshotHandle = nil
 
 ---Sends message to the ReactUI.
@@ -59,8 +58,7 @@ function client.SendReactMessage(action, data)
 end
 
 --- Gera o headshot (mugshot) nativo do GTA V para o ped local.
---- Guarda o handle numa variável persistente para evitar que o GC do Lua
---- destrua a textura antes de a NUI a conseguir carregar.
+--- Usa Citizen.InvokeNative para garantir compatibilidade com FiveM.
 --- Retorna o txd string que pode ser usado com img:// na NUI.
 ---@return string
 local function generatePlayerHeadshot()
@@ -69,37 +67,40 @@ local function generatePlayerHeadshot()
 
     -- Liberta handle anterior se existir
     if _headshotHandle and _headshotHandle ~= 0 then
-        UnregisterPedHeadshot(_headshotHandle)
+        -- 0xD4F7B05C = UnregisterPedHeadshot
+        Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
         _headshotHandle = nil
     end
 
-    local handle = RegisterPedHeadshot(ped)
+    -- 0x4462658788425018 = RegisterPedHeadshot
+    local handle = Citizen.InvokeNative(0x4462658788425018, ped)
     if not handle or handle == 0 then return "" end
 
     local timeout = 0
-    while not IsPedHeadshotReady(handle) and timeout < 100 do
+    -- 0x1F3F7683 = IsPedHeadshotReady
+    while not Citizen.InvokeNative(0x1F3F7683, handle) and timeout < 100 do
         Citizen.Wait(50)
         timeout = timeout + 1
     end
 
-    if IsPedHeadshotReady(handle) then
-        local txd = GetPedHeadshotTxdString(handle)
+    -- 0x1F3F7683 = IsPedHeadshotReady
+    if Citizen.InvokeNative(0x1F3F7683, handle) then
+        -- 0x endorsing = GetPedHeadshotTxdString
+        local txd = Citizen.InvokeNative(0xDB4CAEDBCE1C2728, handle, Citizen.ResultAsString())
         if txd and txd ~= "" then
-            -- Guarda handle persistente — NAO unregister aqui,
-            -- a NUI precisa que o txd se mantenha vivo.
             _headshotHandle = handle
             return txd
         end
     end
 
-    UnregisterPedHeadshot(handle)
+    Citizen.InvokeNative(0xD4F7B05C, handle)
     return ""
 end
 
 --- Liberta o handle do headshot guardado (chamado ao fechar o menu).
 local function releaseHeadshotHandle()
     if _headshotHandle and _headshotHandle ~= 0 then
-        UnregisterPedHeadshot(_headshotHandle)
+        Citizen.InvokeNative(0xD4F7B05C, _headshotHandle)
         _headshotHandle = nil
         client.currentMugshot = nil
     end
@@ -347,7 +348,7 @@ local function openMenu()
 
     -- Gera o mugshot nativo do GTA V (mantém handle vivo)
     local mugshotTxd = generatePlayerHeadshot()
-    client.currentMugshot = mugshotTxd  -- guarda globalmente para Lobby.SyncMugshot
+    client.currentMugshot = mugshotTxd
 
     -- Envia o perfil completo com mugshot para a NUI
     client.SendReactMessage('ui:setUserProfile', {
@@ -360,8 +361,7 @@ local function openMenu()
         mugshot       = mugshotTxd,
     })
 
-    -- Se o mugshot foi gerado com sucesso, envia separadamente para garantir
-    -- que o avatar e o slot 0 ficam atualizados mesmo que o perfil chegue primeiro
+    -- Envia mugshot separadamente para garantir que o slot 0 fica atualizado
     if mugshotTxd and mugshotTxd ~= '' then
         client.SendReactMessage('ui:setPlayerMugshot', mugshotTxd)
         -- Sincroniza com o servidor para distribuir pelo lobby (se estiver num)
