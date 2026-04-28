@@ -770,6 +770,8 @@ AddEventHandler('onResourceStop', function(resource)
 end)
 
 -- Task events
+-- NOTA: O uniforme ja foi vestido no duty (passo 1 - toggleJobDuty).
+-- Aqui apenas actualizamos o estado e pedimos as coordenadas ao servidor.
 RegisterNetEvent(_e('client:onTaskStart'), function(taskData)
     client.lobby.isTaskStarted = true
     client.lobby.taskId        = taskData.taskId
@@ -778,11 +780,8 @@ RegisterNetEvent(_e('client:onTaskStart'), function(taskData)
     local task = Config.Tasks[taskData.taskId]
     if not task then return end
 
-    setJobUniform(true)
-
-    local uniformSuccess = playDutyClothingSequence('A vestir uniforme...')
-    if not uniformSuccess then return end
-
+    -- Notifica o player que a task iniciou e pede coordenadas do primeiro dumpster
+    Utils.Notify('Tarefa iniciada! Dirige-te ao primeiro contentor.', 'success', 5000)
     TriggerServerEvent(_e('server:GiveDumpsterCoordToLobby'), client.lobby.id)
 end)
 
