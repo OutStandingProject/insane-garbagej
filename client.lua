@@ -333,6 +333,16 @@ local function openMenu()
     local profile = lib.callback.await(_e('server:getPlayerProfile'), false)
     if not profile then return end
 
+    -- Cria lobby solo imediatamente ao abrir o menu (se ainda nao tiver lobby)
+    if not client.lobby.id then
+        local lobbyResult = lib.callback.await(_e('server:CreateSoloLobby'), false)
+        if lobbyResult and lobbyResult.lobbyId then
+            client.lobby.id = lobbyResult.lobbyId
+            client.lobby.leaderId = GetPlayerServerId(PlayerId())
+            client.inLobby = true
+        end
+    end
+
     local exp        = tonumber(profile.exp) or 0
     local nextLvlExp = getNextLevelExp(exp)
     local level      = getUserLevel(exp)
@@ -410,12 +420,19 @@ RegisterNUICallback('nui:leaveLobby', function(_, cb)
     cb({})
 end)
 
--- NUI: iniciar tarefa
+-- NUI: iniciar tarefa — fecha o NUI imediatamente e inicia a task
 RegisterNUICallback('nui:startLobbyWithTask', function(data, cb)
-    local taskId = data
-    if type(data) == 'table' then taskId = data.taskId or data end
-    Lobby.StartTask(taskId)
+    local taskId
+    if type(data) == 'table' then
+        taskId = tonumber(data.taskId)
+    else
+        taskId = tonumber(data)
+    end
+    -- Fecha o NUI antes de iniciar para libertar o controlo do jogador
+    SetNuiFocus(false, false)
     cb({})
+    -- Inicia a task
+    Lobby.StartTask(taskId)
 end)
 
 -- Convite recebido: mostra alerta e aguarda resposta
