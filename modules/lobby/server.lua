@@ -233,6 +233,20 @@ local function SendNextDumpsterToLobby(lobbyId)
     return true
 end
 
+-- Cria uma lobby solo para o jogador ao iniciar o duty.
+-- Se o jogador ja tiver uma lobby ativa, devolve o ID existente sem criar nova.
+lib.callback.register(_e('server:CreateSoloLobby'), function(source)
+    -- Se ja esta numa lobby, devolve o ID dessa lobby
+    for _, lobby in pairs(Lobbies) do
+        if Lobby.IsPlayerInLobby(lobby.id, source) then
+            return { lobbyId = lobby.id }
+        end
+    end
+    -- Cria lobby nova
+    local lobby = Lobby.Create(source)
+    return { lobbyId = lobby.id }
+end)
+
 lib.callback.register(_e('server:LeaveLobby'), function(source, lobbyId)
     if not lobbyId then return false end
     return Lobby.LeaveById(lobbyId, source)
